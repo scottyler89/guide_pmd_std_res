@@ -272,19 +272,6 @@ def main():
                           seed = args.seed)
 
 
-#if __name__ == "__main__":
-#    main()
-
-
-
-std_res, stats_res, comb_stats = pmd_std_res_and_stats("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/guide_counts.txt",
-                      "Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/mm_outputs/",
-                      "Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/mm.txt")
-
-
-
-counts = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/guide_counts.txt", sep="\t", index_col = 0)
-std_res = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/mm_outputs/PMD_std_res.tsv", sep="\t", index_col = 0)
-mm = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/mm.txt", sep="\t", index_col = 0)
-
+if __name__ == "__main__":
+    main()
 
