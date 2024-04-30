@@ -86,6 +86,25 @@ def run_glm_analysis(normalized_matrix, model_matrix):
 
 
 def get_pmd_std_res(input_file, in_annotation_cols, n_boot = 100, seed = 123456, sep = "\t"):
+    """
+    This function calculates PMD standardized residuals for a count data with annotations. 
+    It also returns another subset of the data. The PMD standardized residuals calculation is 
+    performed using the pmd function from the percent_maximum_difference package.
+
+    :param input_file: The path to the input file; this will often be gRNA counts, in a similar format to DrugZ's inputs.
+    :type input_file: str
+    :param in_annotation_cols: The index from which to start the subset for PMD calculation.
+    :type in_annotation_cols: int
+    :param n_boot: The number of bootstrap samples to be used in the PMD calculation. Defaults to 100.
+    :type n_boot: int, optional
+    :param seed: The seed for the random number generator. Defaults to 123456.
+    :type seed: int, optional
+    :param sep: The separator used in the input file. Defaults to "\t".
+    :type sep: str, optional
+
+    :return: The PMD standardized residuals and the annotation only subset of the df.
+    :rtype: DataFrame, DataFrame
+    """
     # Reading data from input TSV file
     np.random.seed(seed)
     guides = pd.read_csv(input_file,sep="\t", index_col=0)
@@ -107,11 +126,32 @@ def convert_t_to_p(t_values, df):
 
 
 def get_stouf_t(t_vect):
-    """Stouffer's Method of combining p-values from Z-scores. In this case we're using the t-values, but it's essentially the same."""
+    """Stouffer's Method of combining p-values from Z-scores. In this case we're using the t-values, but it's essentially the same.
+    
+    :param t_vect: A vector of t-values that must have been calculated similarly.
+    :type t_vect: numpy.ndarray
+    
+    :return: 
+    :rtype: float
+    """
     return np.sum(t_vect)/np.sqrt(len(t_vect))
 
 
 def get_all_comb_t(in_stats, annotation_table, annotation_col=1):
+    """
+    This function calculates the combined T-values for all variables in a given input statistics DataFrame and annotation table. 
+    It uses the 'get_stouf_t' function to calculate the T-values.
+
+    :param in_stats: The input statistics DataFrame.
+    :type in_stats: pandas.DataFrame
+    :param annotation_table: The annotation table.
+    :type annotation_table: pandas.DataFrame
+    :param annotation_col: The column index in the annotation table to be used for grouping. Defaults to 1.
+    :type annotation_col: int, optional
+
+    :return: A DataFrame with the combined T-values for all variables.
+    :rtype: pandas.DataFrame
+    """
     print("getting combined T-values for all variables")
     all_keys = sorted(list(set(annotation_table.iloc[:,annotation_col-1])))
     t_cols = in_stats.columns[in_stats.columns.str.endswith("_t")].tolist()
@@ -127,6 +167,23 @@ def get_all_comb_t(in_stats, annotation_table, annotation_col=1):
 
 
 def combine_p(in_stats, annotation_table, annotation_col, dof):
+    """
+    This function calculates the combined p-values for all variables in a given input statistics DataFrame and annotation table.
+    It uses the 'get_all_comb_t' function to get combined T-values and 'convert_t_to_p' to convert T-values to p-values. 
+    It also adjusts the p-values using the 'nan_fdr' function.
+
+    :param in_stats: The input statistics DataFrame.
+    :type in_stats: pandas.DataFrame
+    :param annotation_table: The annotation table.
+    :type annotation_table: pandas.DataFrame
+    :param annotation_col: The column index in the annotation table to be used for grouping.
+    :type annotation_col: int
+    :param dof: The degrees of freedom for the T-distribution.
+    :type dof: int
+
+    :return: A DataFrame with the combined p-values for all variables.
+    :rtype: pandas.DataFrame
+    """
     comb_stats = get_all_comb_t(in_stats, annotation_table, annotation_col)
     t_cols = comb_stats.columns.tolist()
     p_cols = []
@@ -215,8 +272,19 @@ def main():
                           seed = args.seed)
 
 
-if __name__ == "__main__":
-    main()
+#if __name__ == "__main__":
+#    main()
 
+
+
+std_res, stats_res, comb_stats = pmd_std_res_and_stats("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/guide_counts.txt",
+                      "Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/mm_outputs/",
+                      "Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/mm.txt")
+
+
+
+counts = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/guide_counts.txt", sep="\t", index_col = 0)
+std_res = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/mm_outputs/PMD_std_res.tsv", sep="\t", index_col = 0)
+mm = pd.read_csv("Z:/Shared/R&D/17_Computational Biology (General)/Programs/PARG_BFX/cellecta_anchor_screen_2022/st/data/mm.txt", sep="\t", index_col = 0)
 
 
