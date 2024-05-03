@@ -5,7 +5,7 @@ with open('requirements.txt') as f:
     required_packages = f.read().splitlines()
 
 setup(
-    name='guide_pmd_std_res',
+    name='guide_pmd',
     version='0.1.0',
     #packages=find_packages(exclude=('tests*', 'testing*')),
     #license='TBD',

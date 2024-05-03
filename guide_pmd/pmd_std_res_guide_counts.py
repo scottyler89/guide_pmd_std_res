@@ -26,11 +26,13 @@ def nan_fdr(in_vect):
 
 def run_glm_analysis(normalized_matrix, model_matrix):
     """
-    Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
-    This is the main function that will
-    
+    Takes as input a pandas dataframe for the input analysis ready data matrix, and your model matrix. 
+    An important note on the input model matrix is that an "Intercept" column will automatically be added if
+    it does not already exist in the input model matrix. So make sure that you either don't have a different 
+    constant column included.
+        
     :param normalized_matrix: The matrix to be used for running differential abundance
-    :param model_matrix: The model matrix that will be used for the GLM
+    :param model_matrix: The model matrix that will be used for the GLM (assumes Gaussian family, as would be expected from PMD standardized residuals).
     """
     # Input verification
     if not isinstance(normalized_matrix, pd.DataFrame) or not isinstance(model_matrix, pd.DataFrame):
@@ -253,7 +255,7 @@ def pmd_std_res_and_stats(input_file,
             comb_stats = combine_p(stats_res, annotation_table, p_combine_idx, dof)
             output_stats_file = os.path.join(output_dir, "PMD_std_res_combined_stats.tsv")
             comb_stats.to_csv(output_stats_file, sep="\t")
-    return std_res, stats_res, comb_stats
+    return std_res, stats_res, resids_df, comb_stats
 
 
 def main():
@@ -271,7 +273,7 @@ def main():
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
-    std_res, stats_res, comb_stats = pmd_std_res_and_stats(args.in_file, 
+    std_res, stats_res, resids_df, comb_stats = pmd_std_res_and_stats(args.in_file, 
                           args.out_dir, 
                           model_matrix_file=args.model_matrix_file, 
                           p_combine_idx = args.p_combine_idx,
