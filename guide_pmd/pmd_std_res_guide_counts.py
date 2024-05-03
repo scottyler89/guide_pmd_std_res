@@ -48,6 +48,7 @@ def run_glm_analysis(normalized_matrix, model_matrix):
     # Preparing lists to store results
     all_res_dict = {}
     no_var_feat = []
+    residuals_dict = {}
     # Iterating through each feature (row) in the normalized matrix
     for feature_name, feature_data in normalized_matrix.iterrows():
         if feature_data.var()>0:
@@ -61,6 +62,8 @@ def run_glm_analysis(normalized_matrix, model_matrix):
             # Building and fitting the model directly
             model = GLM(combined_data.iloc[:,0], combined_data.loc[:,model_matrix.columns.tolist()], family=Gaussian())
             results = model.fit()
+            residuals = results.resid_response
+            residuals_dict[feature_name] = residuals
             # Storing results
             temp_dict = {}
             for var_name, val in results.tvalues.items():
@@ -82,7 +85,8 @@ def run_glm_analysis(normalized_matrix, model_matrix):
     dummy_df = pd.DataFrame(dummy_mat, index = no_var_feat, columns = res_table.columns)
     res_table = pd.concat((res_table,dummy_df),axis=0)
     res_table = res_table.loc[normalized_matrix.index,:]
-    return res_table
+    residuals_df = pd.DataFrame(residuals_dict).T
+    return res_table, residuals_df
 
 
 def get_pmd_std_res(input_file, in_annotation_cols, n_boot = 100, seed = 123456, sep = "\t"):
@@ -233,14 +237,16 @@ def pmd_std_res_and_stats(input_file,
     std_res, annotation_table = get_pmd_std_res(input_file, in_annotation_cols = in_annotation_cols, n_boot = n_boot, seed = seed, sep=sep)
     std_res.to_csv(output_file,sep=sep)
     stats_res = None
-    collapsed_sig = None
+    comb_stats = None
     # If we're running the stats, then get them going:
     if model_matrix_file is not None:
         print("running the statistics, using the specified model matrix")
         output_stats_file = os.path.join(output_dir, "PMD_std_res_stats.tsv")
+        resids_file = os.path.join(output_dir, "PMD_std_res_stats_resids.tsv")
         mm = pd.read_csv(model_matrix_file, sep=sep, index_col = 0)
-        stats_df = run_glm_analysis(std_res, mm)
+        stats_df, resids_df = run_glm_analysis(std_res, mm)
         stats_df.to_csv(output_stats_file, sep="\t")
+        resids_df.to_csv(resids_file, sep="\t")
         if p_combine_idx is not None:
             # Note that we already have the intercept, so we're already -1'ing for dof calc
             dof = std_res.shape[1]-mm.shape[1]
@@ -261,6 +267,7 @@ def main():
     parser.add_argument("-p_combine_idx", type=str, help= "If each real variable can have multiple measures in the different rows, we'll combine them with Stouffer's Method. This zero-index column index tells us which column holds the key for this p-value combining.", default=None)
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
+    parser.add_argument("-file_type", type = str, help= "tsv or csv, defulat is tsv", default = "tsv")
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -268,10 +275,14 @@ def main():
                           args.out_dir, 
                           model_matrix_file=args.model_matrix_file, 
                           p_combine_idx = args.p_combine_idx,
+                          in_annotation_cols=args.annotation_cols,
                           n_boot = args.n_boot, 
-                          seed = args.seed)
+                          seed = args.seed,
+                          file_sep=args.file_type)
+                            
 
 
 if __name__ == "__main__":
     main()
+
 
