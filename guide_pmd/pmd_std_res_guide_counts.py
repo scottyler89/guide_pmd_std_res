@@ -252,10 +252,10 @@ def pmd_std_res_and_stats(input_file,
         if p_combine_idx is not None:
             # Note that we already have the intercept, so we're already -1'ing for dof calc
             dof = std_res.shape[1]-mm.shape[1]
-            comb_stats = combine_p(stats_res, annotation_table, p_combine_idx, dof)
+            comb_stats = combine_p(stats_df, annotation_table, p_combine_idx, dof)
             output_stats_file = os.path.join(output_dir, "PMD_std_res_combined_stats.tsv")
             comb_stats.to_csv(output_stats_file, sep="\t")
-    return std_res, stats_res, resids_df, comb_stats
+    return std_res, stats_df, resids_df, comb_stats
 
 
 def main():
