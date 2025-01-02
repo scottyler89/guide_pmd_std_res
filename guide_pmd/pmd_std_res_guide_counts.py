@@ -252,6 +252,8 @@ def pmd_std_res_and_stats(input_file,
             ## Separate the vars
             keep_cols = [thing for thing in mm.columns if thing not in pre_regress_vars]
             if not all(var in mm.columns for var in pre_regress_vars):
+                print("mm columns:\n",mm.columns)
+                print("pre_regress_vars:\n",pre_regress_vars)
                 raise ValueError("Not all variables in pre_regress_vars are in the model matrix!")
             _, first_regressed = run_glm_analysis(std_res, mm[pre_regress_vars])
             # In this case, we've already modeled and accounted for the intercept, 
