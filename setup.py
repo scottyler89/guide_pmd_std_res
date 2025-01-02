@@ -6,9 +6,9 @@ with open('requirements.txt') as f:
 
 setup(
     name='guide_pmd',
-    version='0.1.1',
+    version='0.1.2',
     #packages=find_packages(exclude=('tests*', 'testing*')),
-    #license='TBD',
+    license='MIT',
     description='A package for analyzing CRISPR screens (or similar data), using PMD standardized residuals with linear modeling downstream',
     long_description=open('README.md').read(),
     install_requires=required_packages,
