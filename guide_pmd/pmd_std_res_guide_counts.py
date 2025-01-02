@@ -24,7 +24,7 @@ def nan_fdr(in_vect):
     return(out_fdr)
 ######################################
 
-def run_glm_analysis(normalized_matrix, model_matrix):
+def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
     """
     Takes as input a pandas dataframe for the input analysis ready data matrix, and your model matrix. 
     An important note on the input model matrix is that an "Intercept" column will automatically be added if
@@ -45,7 +45,7 @@ def run_glm_analysis(normalized_matrix, model_matrix):
     except Exception as e:
         raise ValueError("Both matrices must contain numeric values.") from e
     # Adding an intercept column
-    if "Intercept" not in model_matrix.columns:
+    if "Intercept" not in model_matrix.columns and add_intercept:
         model_matrix.insert(0, 'Intercept', 1)
     # Preparing lists to store results
     all_res_dict = {}
@@ -209,6 +209,7 @@ def pmd_std_res_and_stats(input_file,
                             model_matrix_file = None, 
                             p_combine_idx = None,
                             in_annotation_cols = 2,
+                            pre_regress_vars = [],
                             n_boot = 100, 
                             seed = 123456, 
                             file_sep="tsv"):
@@ -246,7 +247,19 @@ def pmd_std_res_and_stats(input_file,
         output_stats_file = os.path.join(output_dir, "PMD_std_res_stats.tsv")
         resids_file = os.path.join(output_dir, "PMD_std_res_stats_resids.tsv")
         mm = pd.read_csv(model_matrix_file, sep=sep, index_col = 0)
-        stats_df, resids_df = run_glm_analysis(std_res, mm)
+        # If we're doing a hard pre-regress:
+        if len(pre_regress_vars)>0:
+            ## Separate the vars
+            keep_cols = [thing for thing in mm.columns if thing not in pre_regress_vars]
+            if not all(var in mm.columns for var in pre_regress_vars):
+                raise ValueError("Not all variables in pre_regress_vars are in the model matrix!")
+            _, first_regressed = run_glm_analysis(std_res, mm[pre_regress_vars])
+            # In this case, we've already modeled and accounted for the intercept, 
+            # so we exclude it from the second model in the serial modeling
+            stats_df, resids_df = run_glm_analysis(first_regressed, mm[keep_cols], add_intercept=False)
+        else:
+            keep_cols = mm.columns
+            stats_df, resids_df = run_glm_analysis(std_res, mm[keep_cols])
         stats_df.to_csv(output_stats_file, sep="\t")
         resids_df.to_csv(resids_file, sep="\t")
         if p_combine_idx is not None:
@@ -265,6 +278,7 @@ def main():
     parser.add_argument("-in_file", type=str, help= "Path to the input TSV file")
     parser.add_argument("-out_dir", type=str, help= "Path to the desired output file")
     parser.add_argument("-model_matrix_file", type=str, help= "Path to the input TSV file", default=None)
+    parser.add_argument("-pre_regress_vars", type=list, help= "Any variables to do full pre-regression rather than joint modeling.", default=[])
     parser.add_argument("-annotation_cols", type=str, help= "If the input file has annotation columns tell us how many. The first column will be taken as the unique IDs (like a guide ID), but the next column(s) might be other annotations (like gene ID). Default=2", default=2)
     parser.add_argument("-p_combine_idx", type=str, help= "If each real variable can have multiple measures in the different rows, we'll combine them with Stouffer's Method. This zero-index column index tells us which column holds the key for this p-value combining.", default=None)
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
@@ -275,9 +289,10 @@ def main():
     # Call the processing function with the parsed arguments
     std_res, stats_res, resids_df, comb_stats = pmd_std_res_and_stats(args.in_file, 
                           args.out_dir, 
-                          model_matrix_file=args.model_matrix_file, 
+                          model_matrix_file = args.model_matrix_file, 
                           p_combine_idx = args.p_combine_idx,
-                          in_annotation_cols=args.annotation_cols,
+                          in_annotation_cols = args.annotation_cols,
+                          pre_regress_vars = args.pre_regress_vars.
                           n_boot = args.n_boot, 
                           seed = args.seed,
                           file_sep=args.file_type)
