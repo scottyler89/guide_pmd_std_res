@@ -13,6 +13,12 @@ This script calculates standardized residuals using PMD and performs statistical
 
 ---
 
+## Installation
+This script can be easily installed with pip:
+
+`python -m pip install git+https://github.com/scottyler89/guide_pmd_std_res`
+
+---
 ## Usage
 
 ### Command-Line Arguments
@@ -34,7 +40,7 @@ This script calculates standardized residuals using PMD and performs statistical
 ### Example Usage
 
 ```bash
-python pmd_analysis.py \
+python -m guide_pmd.pmd_std_res_guide_counts \
     -in_file data/input_data.tsv \
     -out_dir results/ \
     -model_matrix_file data/model_matrix.tsv \
