@@ -275,11 +275,11 @@ def main():
     # Initialize argument parser
     parser = argparse.ArgumentParser(description="Process a TSV file and save to an output file.")
     # Adding arguments for input file and output file
-    parser.add_argument("-in_file", type=str, help= "Path to the input TSV file")
-    parser.add_argument("-out_dir", type=str, help= "Path to the desired output file")
-    parser.add_argument("-model_matrix_file", type=str, help= "Path to the input TSV file", default=None)
-    parser.add_argument("-pre_regress_vars", type=list, help= "Any variables to do full pre-regression rather than joint modeling.", default=[])
-    parser.add_argument("-annotation_cols", type=str, help= "If the input file has annotation columns tell us how many. The first column will be taken as the unique IDs (like a guide ID), but the next column(s) might be other annotations (like gene ID). Default=2", default=2)
+    parser.add_argument("-in_file", "-i", type=str, help= "Path to the input TSV file")
+    parser.add_argument("-out_dir", "-o" type=str, help= "Path to the desired output file")
+    parser.add_argument("-model_matrix_file","-mm", type=str, help= "Path to the input TSV file", default=None)
+    parser.add_argument("-pre_regress_vars", "-prv", type=list, help= "Any variables to do full pre-regression rather than joint modeling.", default=[])
+    parser.add_argument("-annotation_cols", "-ann_cols",type=str, help= "If the input file has annotation columns tell us how many. The first column will be taken as the unique IDs (like a guide ID), but the next column(s) might be other annotations (like gene ID). Default=2", default=2)
     parser.add_argument("-p_combine_idx", type=str, help= "If each real variable can have multiple measures in the different rows, we'll combine them with Stouffer's Method. This zero-index column index tells us which column holds the key for this p-value combining.", default=None)
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
