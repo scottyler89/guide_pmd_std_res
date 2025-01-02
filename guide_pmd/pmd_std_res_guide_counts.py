@@ -292,7 +292,7 @@ def main():
                           model_matrix_file = args.model_matrix_file, 
                           p_combine_idx = args.p_combine_idx,
                           in_annotation_cols = args.annotation_cols,
-                          pre_regress_vars = args.pre_regress_vars.
+                          pre_regress_vars = args.pre_regress_vars,
                           n_boot = args.n_boot, 
                           seed = args.seed,
                           file_sep=args.file_type)
