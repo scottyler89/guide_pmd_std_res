@@ -296,7 +296,7 @@ def main():
                           n_boot = args.n_boot, 
                           seed = args.seed,
                           file_sep=args.file_type)
-                            
+
 
 
 if __name__ == "__main__":
