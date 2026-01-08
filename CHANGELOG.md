@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-01-08
+
 ### Added
 - `pytest` test suite and `pytest.ini` for consistent local/CI runs.
 - `ruff` linting configuration and CI enforcement.
@@ -26,4 +28,3 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 ## [0.1.4]
 - Prior release baseline (pre-hygiene upgrades).
-

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "guide_pmd"
-version = "0.1.4"
+version = "0.1.5"
 description = "A package for analyzing CRISPR screens (or similar data), using PMD standardized residuals with linear modeling downstream"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
