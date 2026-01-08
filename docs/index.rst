@@ -1,13 +1,9 @@
+Guide PMD Standardized Residuals
+================================
+
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
 
+   api
 
-
-Guide PMD Standardized Residuals Module
----------------------------------------
-
-.. automodule:: guide_pmd.pmd_std_res_guide_counts
-   :members:
-   :undoc-members:
-   :show-inheritance:
+This package implements PMD standardized residuals and downstream statistics.
