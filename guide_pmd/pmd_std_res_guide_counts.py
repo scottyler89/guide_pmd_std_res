@@ -46,10 +46,12 @@ def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
         raise ValueError("Both matrices must contain numeric values.") from e
     # Adding an intercept column
     if "Intercept" not in model_matrix.columns and add_intercept:
+        model_matrix = model_matrix.copy()
         model_matrix.insert(0, 'Intercept', 1)
+    t_cols = [f"{var_name}_t" for var_name in model_matrix.columns]
+    p_cols = [f"{var_name}_p" for var_name in model_matrix.columns]
     # Preparing lists to store results
     all_res_dict = {}
-    no_var_feat = []
     residuals_dict = {}
     # Iterating through each feature (row) in the normalized matrix
     for feature_name, feature_data in normalized_matrix.iterrows():
@@ -64,7 +66,7 @@ def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
             # Building and fitting the model directly
             model = GLM(combined_data.iloc[:,0], combined_data.loc[:,model_matrix.columns.tolist()], family=Gaussian())
             results = model.fit()
-            residuals = results.resid_response
+            residuals = pd.Series(results.resid_response, index=combined_data.index)
             residuals_dict[feature_name] = residuals
             # Storing results
             temp_dict = {}
@@ -73,21 +75,17 @@ def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
             for var_name, val in results.pvalues.items():
                 temp_dict[var_name+"_p"]=val
             all_res_dict[feature_name]=temp_dict
-        else:
-            no_var_feat.append(feature_name)
-    p_cols = [var_name+"_p" for var_name, val in results.pvalues.items()]
     # Creating and returning the output DataFrame
     res_table = pd.DataFrame(all_res_dict).T
+    res_table = res_table.reindex(columns=t_cols + p_cols)
     del all_res_dict
     gc.collect()
     for p_col in p_cols:
         res_table[p_col+"_adj"]=nan_fdr(res_table[p_col].to_numpy())
-    dummy_mat = np.zeros((len(no_var_feat),res_table.shape[1]))
-    dummy_mat[:,:]=np.nan
-    dummy_df = pd.DataFrame(dummy_mat, index = no_var_feat, columns = res_table.columns)
-    res_table = pd.concat((res_table,dummy_df),axis=0)
-    res_table = res_table.loc[normalized_matrix.index,:]
+    res_table = res_table.reindex(index=normalized_matrix.index)
     residuals_df = pd.DataFrame(residuals_dict).T
+    residuals_df = residuals_df.reindex(columns=model_matrix.index)
+    residuals_df = residuals_df.reindex(index=normalized_matrix.index)
     return res_table, residuals_df
 
 
@@ -113,12 +111,15 @@ def get_pmd_std_res(input_file, in_annotation_cols, n_boot = 100, seed = 123456,
     """
     # Reading data from input TSV file
     np.random.seed(seed)
-    guides = pd.read_csv(input_file,sep="\t", index_col=0)
+    in_annotation_cols = int(in_annotation_cols)
+    if in_annotation_cols < 1:
+        raise ValueError("in_annotation_cols must be >= 1")
+    guides = pd.read_csv(input_file, sep=sep, index_col=0)
     # Processing the data (this is where you would implement your specific logic)
     print("getting the PMD standardized residuals")
     pmd_res = pmd(guides.iloc[:,(in_annotation_cols-1):], num_boot=n_boot, skip_posthoc = True)
     std_res = pmd_res.z_scores
-    std_res[np.isnan(std_res)]=0.0
+    std_res = std_res.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return std_res, guides.iloc[:,:(in_annotation_cols-1)]
 
 
@@ -152,18 +153,27 @@ def get_all_comb_t(in_stats, annotation_table, annotation_col=1):
     :type in_stats: pandas.DataFrame
     :param annotation_table: The annotation table.
     :type annotation_table: pandas.DataFrame
-    :param annotation_col: The column index in the annotation table to be used for grouping. Defaults to 1.
+    :param annotation_col: The 0-based column index in the original input file to be used for grouping.
+        Since the input file's first column is used as the index, this value should be >= 1.
+        Defaults to 1 (the first non-index column).
     :type annotation_col: int, optional
 
     :return: A DataFrame with the combined T-values for all variables.
     :rtype: pandas.DataFrame
     """
     print("getting combined T-values for all variables")
-    all_keys = sorted(list(set(annotation_table.iloc[:,annotation_col-1])))
+    if annotation_table.shape[1] < 1:
+        raise ValueError("annotation_table must have at least one column to combine on")
+    if annotation_col < 1:
+        raise ValueError("annotation_col must be >= 1 (0 is the index/ID column and is not present in annotation_table)")
+    ann_idx = annotation_col - 1
+    if ann_idx >= annotation_table.shape[1]:
+        raise ValueError(f"annotation_col out of range for annotation_table: {annotation_col}")
+    all_keys = sorted(list(set(annotation_table.iloc[:,ann_idx])))
     t_cols = in_stats.columns[in_stats.columns.str.endswith("_t")].tolist()
     all_out = {}
     for key in all_keys:
-        temp_row_names = annotation_table.index[annotation_table.iloc[:,annotation_col-1]==key].tolist()
+        temp_row_names = annotation_table.index[annotation_table.iloc[:,ann_idx]==key].tolist()
         stats_sub_table = in_stats.loc[temp_row_names,:]
         temp_row_entry = {}
         for temp_t in t_cols:
@@ -227,21 +237,23 @@ def pmd_std_res_and_stats(input_file,
     """
     if pre_regress_vars is None:
         pre_regress_vars = []
-    if not os.path.isdir(output_dir): os.mkdir(output_dir)
-    output_file = os.path.join(output_dir, "PMD_std_res.tsv")
-    # Make sure the model matrix file actually exists if 
-    if model_matrix_file is not None:
-        assert os.path.isfile(model_matrix_file)
+    os.makedirs(output_dir, exist_ok=True)
     if file_sep == "tsv":
-        sep="\t"
+        sep = "\t"
     elif file_sep == "csv":
         sep = ","
     else:
-        raise "file_sep must by either 'tsv' or 'csv'"
+        raise ValueError("file_sep must be either 'tsv' or 'csv'")
+    output_file = os.path.join(output_dir, "PMD_std_res.tsv")
+    # Make sure the model matrix file actually exists if 
+    if model_matrix_file is not None:
+        if not os.path.isfile(model_matrix_file):
+            raise FileNotFoundError(model_matrix_file)
     # Run the PMD standardized residuals & save file
     std_res, annotation_table = get_pmd_std_res(input_file, in_annotation_cols = in_annotation_cols, n_boot = n_boot, seed = seed, sep=sep)
-    std_res.to_csv(output_file,sep=sep)
-    stats_res = None
+    std_res.to_csv(output_file, sep="\t")
+    stats_df = None
+    resids_df = None
     comb_stats = None
     # If we're running the stats, then get them going:
     if model_matrix_file is not None:
@@ -249,6 +261,7 @@ def pmd_std_res_and_stats(input_file,
         output_stats_file = os.path.join(output_dir, "PMD_std_res_stats.tsv")
         resids_file = os.path.join(output_dir, "PMD_std_res_stats_resids.tsv")
         mm = pd.read_csv(model_matrix_file, sep=sep, index_col = 0)
+        design_cols = None
         # If we're doing a hard pre-regress:
         if len(pre_regress_vars)>0:
             ## Separate the vars
@@ -261,14 +274,24 @@ def pmd_std_res_and_stats(input_file,
             # In this case, we've already modeled and accounted for the intercept, 
             # so we exclude it from the second model in the serial modeling
             stats_df, resids_df = run_glm_analysis(first_regressed, mm[keep_cols], add_intercept=False)
+            design_cols = len(keep_cols)
         else:
             keep_cols = mm.columns
             stats_df, resids_df = run_glm_analysis(std_res, mm[keep_cols])
+            design_cols = len(keep_cols) + (0 if "Intercept" in keep_cols else 1)
         stats_df.to_csv(output_stats_file, sep="\t")
         resids_df.to_csv(resids_file, sep="\t")
         if p_combine_idx is not None:
-            # Note that we already have the intercept, so we're already -1'ing for dof calc
-            dof = std_res.shape[1]-mm.shape[1]
+            p_combine_idx = int(p_combine_idx)
+            if p_combine_idx < 1:
+                raise ValueError("p_combine_idx must be >= 1 (0 is the index/ID column and is not present in annotation_table)")
+            if annotation_table.shape[1] < 1:
+                raise ValueError("Cannot combine p-values: annotation_table has no columns")
+            if (p_combine_idx - 1) >= annotation_table.shape[1]:
+                raise ValueError(f"p_combine_idx out of range for annotation_table: {p_combine_idx}")
+            dof = std_res.shape[1] - design_cols
+            if dof <= 0:
+                raise ValueError(f"Non-positive degrees of freedom for t distribution: {dof}")
             comb_stats = combine_p(stats_df, annotation_table, p_combine_idx, dof)
             output_stats_file = os.path.join(output_dir, "PMD_std_res_combined_stats.tsv")
             comb_stats.to_csv(output_stats_file, sep="\t")
@@ -279,12 +302,12 @@ def main():
     # Initialize argument parser
     parser = argparse.ArgumentParser(description="Process a TSV file and save to an output file.")
     # Adding arguments for input file and output file
-    parser.add_argument("-in_file", "-i", type=str, help= "Path to the input TSV file")
-    parser.add_argument("-out_dir", "-o", type=str, help= "Path to the desired output file")
+    parser.add_argument("-in_file", "-i", type=str, required=True, help= "Path to the input file")
+    parser.add_argument("-out_dir", "-o", type=str, required=True, help= "Path to the desired output directory")
     parser.add_argument("-model_matrix_file","-mm", type=str, help= "Path to the input TSV file", default=None)
     parser.add_argument("-pre_regress_vars", "-prv", type=str, nargs="+", help= "Any variables to do full pre-regression rather than joint modeling.", default=None)
-    parser.add_argument("-annotation_cols", "-ann_cols", type=str, help= "If the input file has annotation columns tell us how many. The first column will be taken as the unique IDs (like a guide ID), but the next column(s) might be other annotations (like gene ID). Default=2", default=2)
-    parser.add_argument("-p_combine_idx", type=int, help= "If each real variable can have multiple measures in the different rows, we'll combine them with Stouffer's Method. This zero-index column index tells us which column holds the key for this p-value combining.", default=1)
+    parser.add_argument("-annotation_cols", "-ann_cols", type=int, help= "Number of annotation columns in the input file (including the ID/index column). Default=2", default=2)
+    parser.add_argument("-p_combine_idx", type=int, help= "0-based column index in the input file for Stouffer combining. Default=1 (first non-index column). Set to None to disable in the Python API.", default=1)
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
     parser.add_argument("-file_type", type = str, help= "tsv or csv, defulat is tsv", default = "tsv")
@@ -305,5 +328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
