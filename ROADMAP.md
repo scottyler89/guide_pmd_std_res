@@ -39,4 +39,4 @@ Back-compat notes:
 - [x] Fix/expand docs build config (ensure `sphinx_rtd_theme` is declared).
 - [x] Add `LICENSE` file (README says MIT but none is present).
 - [x] Add `CHANGELOG.md`.
-- [ ] Tag releases aligned to versions (done when merging back to `main`).
+- [x] Tag releases aligned to versions (`v0.1.5`).
