@@ -31,9 +31,9 @@ Back-compat notes:
 - [x] Enforce `ruff` in CI.
 
 ### P1 — Packaging Modernization
-- [ ] Add `pyproject.toml` (PEP 621 metadata) and migrate away from `setup.py`-only packaging.
-- [ ] Declare extras: `dev` (tests/lint), `docs` (sphinx theme), and pin minimum supported Python.
-- [ ] Add console entry point (so users can run without `python -m ...`).
+- [x] Add `pyproject.toml` (PEP 621 metadata) and migrate away from `setup.py`-only packaging (kept `setup.py` for back-compat).
+- [x] Declare extras: `dev` (tests/lint), `docs` (sphinx theme), and pin minimum supported Python (>=3.10).
+- [x] Add console entry point (so users can run without `python -m ...`).
 
 ### P2 — Docs / Release Hygiene
 - [ ] Fix/expand docs build config (ensure `sphinx_rtd_theme` is declared).
