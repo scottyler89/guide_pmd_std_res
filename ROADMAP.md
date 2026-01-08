@@ -24,7 +24,8 @@ Back-compat notes:
 - CLI default `-p_combine_idx` remains `1` as before.
 
 ### P1 — Tests / CI
-- [ ] Add `pytest` test suite (`tests/`) for pure functions and CLI parsing.
+- [x] Add `pytest` test suite (`tests/`) for pure functions and CLI parsing.
+- [x] Add `pytest.ini` to standardize local/CI runs.
 - [ ] Add GitHub Actions workflow to run unit tests + lint on PRs.
 - [ ] Add a lightweight style tool (e.g. `ruff`) and enforce in CI.
 
