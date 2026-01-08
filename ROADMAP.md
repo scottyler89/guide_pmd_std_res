@@ -27,7 +27,8 @@ Back-compat notes:
 - [x] Add `pytest` test suite (`tests/`) for pure functions and CLI parsing.
 - [x] Add `pytest.ini` to standardize local/CI runs.
 - [ ] Add GitHub Actions workflow to run unit tests + lint on PRs.
-- [ ] Add a lightweight style tool (e.g. `ruff`) and enforce in CI.
+- [x] Add a lightweight style tool (`ruff`) and baseline config.
+- [ ] Enforce `ruff` in CI.
 
 ### P1 — Packaging Modernization
 - [ ] Add `pyproject.toml` (PEP 621 metadata) and migrate away from `setup.py`-only packaging.

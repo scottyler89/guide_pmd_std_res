@@ -1,0 +1,12 @@
+target-version = "py39"
+line-length = 100
+extend-exclude = [
+  "build",
+  "guide_pmd.egg-info",
+]
+
+[lint]
+select = ["F"]
+
+[lint.per-file-ignores]
+"guide_pmd/__init__.py" = ["F401", "F403", "F405"]
