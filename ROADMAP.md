@@ -36,6 +36,7 @@ Back-compat notes:
 - [x] Add console entry point (so users can run without `python -m ...`).
 
 ### P2 — Docs / Release Hygiene
-- [ ] Fix/expand docs build config (ensure `sphinx_rtd_theme` is declared).
-- [ ] Add `LICENSE` file (README says MIT but none is present).
-- [ ] Add `CHANGELOG.md` and tag releases aligned to versions.
+- [x] Fix/expand docs build config (ensure `sphinx_rtd_theme` is declared).
+- [x] Add `LICENSE` file (README says MIT but none is present).
+- [x] Add `CHANGELOG.md`.
+- [ ] Tag releases aligned to versions (done when merging back to `main`).
