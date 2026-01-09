@@ -162,7 +162,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
 - [x] Golden tests for baseline outputs (byte-for-byte).
 - [x] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
-- [ ] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
+- [x] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
 
 #### P3.9 — Performance / UX
 - [ ] Add progress reporting (genes processed, failures, fallbacks).
