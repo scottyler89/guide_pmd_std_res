@@ -122,20 +122,20 @@ Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B opti
 #### P3.5 — Robustness / Contamination Handling (Plan C)
 Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (Decision D).
 
-- [ ] Compute discordance metrics per gene:
-  - [ ] fraction opposite sign vs majority for focal var
-  - [ ] dispersion of guide slopes
-  - [ ] max |standardized residual| / influence proxy
-- [ ] Provide robust effect summaries (QC; not primary p-values):
-  - [ ] median of per-guide slopes
-  - [ ] trimmed mean / winsorized mean
+- [x] Compute discordance metrics per gene:
+  - [x] fraction opposite sign vs majority for focal var
+  - [x] dispersion of guide slopes
+  - [x] max |standardized residual| / influence proxy
+- [x] Provide robust effect summaries (QC; not primary p-values):
+  - [x] median of per-guide slopes
+  - [x] trimmed mean / winsorized mean
   - [ ] Huber M-estimator (optional)
 - [ ] Define “flagged gene” criteria from rubric (thresholds + rationale + configurability).
 - [ ] Optional targeted models for flagged genes:
   - [ ] heavy-tailed residual sensitivity (if feasible in chosen tooling)
   - [ ] 2-component mixture on guide slopes (good vs bad) with posterior guide weights
-- [ ] Output spec:
-  - [ ] `PMD_std_res_gene_qc.tsv`
+- [x] Output spec:
+  - [x] `PMD_std_res_gene_qc.tsv`
   - [ ] optional: `PMD_std_res_gene_mixture.tsv`, `PMD_std_res_gene_guide_details.tsv`
 
 #### P3.6 — Figures (Add-on only)
@@ -150,14 +150,14 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-level` (enable)
   - [x] `--focal-vars ...`
   - [x] `--gene-id-col ...`
-  - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`)
+  - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`, `qc`)
   - [x] `--gene-out-dir ...`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
 - [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
 
 #### P3.8 — Testing + Validation (focus on invariants, calibration, and regressions)
 - [x] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
-- [ ] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
+- [x] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
 - [x] Golden tests for baseline outputs (byte-for-byte).
 - [ ] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
 - [ ] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
