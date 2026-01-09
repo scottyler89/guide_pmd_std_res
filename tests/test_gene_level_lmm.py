@@ -56,9 +56,11 @@ def test_compute_gene_lmm_detects_signal_in_positive_control():
     row_b = out.loc[out["gene_id"] == "B"].iloc[0]
 
     assert row_a["theta"] > 1.0
-    assert row_a["p_primary_source"] == "lrt"
-    assert row_a["p_primary"] < 1e-6
-    assert row_b["p_primary"] > 0.01
+    assert bool(row_a["lrt_ok"]) is True
+    assert row_a["lrt_p"] < 1e-6
+    assert bool(row_a["wald_ok"]) is True
+    assert row_a["wald_p"] < 1e-6
+    assert row_b["lrt_p"] > 0.01
 
 
 def test_compute_gene_lmm_uses_ri_when_insufficient_guides():
@@ -105,7 +107,8 @@ def test_compute_gene_lmm_falls_back_to_meta_explicitly(monkeypatch):
     )
 
     assert set(out["method"]) == {"meta_fallback"}
-    assert set(out["p_primary_source"]) == {"meta"}
+    assert set(out["lrt_ok"]) == {False}
+    assert set(out["wald_ok"]) == {True}
     assert out["fit_error"].str.contains("lmm_failed").all()
 
 

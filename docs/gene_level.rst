@@ -60,8 +60,13 @@ Fits a per-gene linear mixed model using all observations ``y_{guide,sample}``:
 - Random intercept per guide (RI)
 - Random slope per guide (RI+RS) when enough guides exist (see rubric/fallback fields)
 
-Primary p-value is from a likelihood ratio test (LRT). If the LRT is numerically invalid,
-``p_primary`` falls back to the Wald test and is explicitly labeled by ``p_primary_source``.
+This output includes **both**:
+
+- the likelihood ratio test (LRT) p-value (``lrt_p`` / ``lrt_p_adj``), and
+- the Wald test p-value (``wald_p`` / ``wald_p_adj``)
+
+They are kept in separate columns so they cannot be conflated. If the LRT is numerically invalid,
+``lrt_ok`` is ``False`` and ``lrt_p`` is ``NaN`` (the Wald columns are still reported when available).
 
 Output: ``PMD_std_res_gene_lmm.tsv``
 

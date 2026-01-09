@@ -63,12 +63,12 @@ def test_plan_a_and_plan_b_agree_on_simple_synthetic():
     assert np.sign(m_a["theta"]) == np.sign(l_a["theta"])
     assert abs(float(m_a["theta"]) - float(l_a["theta"])) < 0.25
     assert float(m_a["p"]) < 1e-4
-    assert float(l_a["p_primary"]) < 1e-4
+    assert bool(l_a["lrt_ok"]) is True
+    assert float(l_a["lrt_p"]) < 1e-4
 
     m_b = out_meta.loc[out_meta["gene_id"] == "B"].iloc[0]
     l_b = out_lmm.loc[out_lmm["gene_id"] == "B"].iloc[0]
     assert abs(float(m_b["theta"])) < 0.25
     assert abs(float(l_b["theta"])) < 0.25
     assert float(m_b["p"]) > 0.01
-    assert float(l_b["p_primary"]) > 0.01
-
+    assert float(l_b["lrt_p"]) > 0.01

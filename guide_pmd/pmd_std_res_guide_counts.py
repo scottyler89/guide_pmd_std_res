@@ -410,9 +410,13 @@ def pmd_std_res_and_stats(input_file,
                     print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})")
                 if gene_lmm is not None and (not gene_lmm.empty):
                     method_counts = gene_lmm["method"].value_counts(dropna=False).to_dict()
-                    source_counts = gene_lmm["p_primary_source"].value_counts(dropna=False).to_dict()
                     print("gene-level lmm methods:", method_counts)
-                    print("gene-level lmm p sources:", source_counts)
+                    if "lrt_ok" in gene_lmm.columns:
+                        lrt_ok_counts = gene_lmm["lrt_ok"].value_counts(dropna=False).to_dict()
+                        print("gene-level lmm lrt_ok:", lrt_ok_counts)
+                    if "wald_ok" in gene_lmm.columns:
+                        wald_ok_counts = gene_lmm["wald_ok"].value_counts(dropna=False).to_dict()
+                        print("gene-level lmm wald_ok:", wald_ok_counts)
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats

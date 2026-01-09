@@ -138,11 +138,12 @@ def compute_gene_lmm(
                         "se_theta": np.nan,
                         "wald_z": np.nan,
                         "wald_p": np.nan,
+                        "wald_ok": False,
+                        "wald_p_adj": np.nan,
                         "lrt_stat": np.nan,
                         "lrt_p": np.nan,
-                        "p_primary": np.nan,
-                        "p_primary_source": "",
-                        "p_primary_adj": np.nan,
+                        "lrt_ok": False,
+                        "lrt_p_adj": np.nan,
                         "sigma_alpha": np.nan,
                         "tau": np.nan,
                         "converged_full": False,
@@ -249,18 +250,15 @@ def compute_gene_lmm(
                 res = fit_with_structure(False)
 
             if res["ok"]:
-                if res["lrt_ok"]:
-                    p_primary = float(res["lrt_p"])
-                    p_primary_source = "lrt"
-                    fit_error = ""
-                elif np.isfinite(res["wald_p"]):
-                    p_primary = float(res["wald_p"])
-                    p_primary_source = "wald"
-                    fit_error = "lrt_invalid; using wald"
-                else:
-                    p_primary = np.nan
-                    p_primary_source = ""
-                    fit_error = "lrt_invalid_and_wald_invalid"
+                lrt_ok = bool(res["lrt_ok"])
+                wald_ok = bool(np.isfinite(res["wald_p"]))
+                fit_error = ""
+                if not lrt_ok:
+                    fit_error = "lrt_invalid"
+                if (not wald_ok) and fit_error:
+                    fit_error = f"{fit_error}; wald_invalid"
+                elif not wald_ok:
+                    fit_error = "wald_invalid"
 
                 out_rows.append(
                     {
@@ -272,11 +270,12 @@ def compute_gene_lmm(
                         "se_theta": res["se_theta"],
                         "wald_z": res["wald_z"],
                         "wald_p": res["wald_p"],
+                        "wald_ok": wald_ok,
+                        "wald_p_adj": np.nan,
                         "lrt_stat": res["lrt_stat"],
                         "lrt_p": res["lrt_p"],
-                        "p_primary": p_primary,
-                        "p_primary_source": p_primary_source,
-                        "p_primary_adj": np.nan,
+                        "lrt_ok": lrt_ok,
+                        "lrt_p_adj": np.nan,
                         "sigma_alpha": res["sigma_alpha"],
                         "tau": res["tau"],
                         "converged_full": res["converged_full"],
@@ -308,11 +307,12 @@ def compute_gene_lmm(
                             "se_theta": se_theta,
                             "wald_z": z,
                             "wald_p": p,
+                            "wald_ok": bool(np.isfinite(p)),
+                            "wald_p_adj": np.nan,
                             "lrt_stat": np.nan,
                             "lrt_p": np.nan,
-                            "p_primary": p,
-                            "p_primary_source": "meta",
-                            "p_primary_adj": np.nan,
+                            "lrt_ok": False,
+                            "lrt_p_adj": np.nan,
                             "sigma_alpha": np.nan,
                             "tau": float(meta_row["tau"]),
                             "converged_full": False,
@@ -336,11 +336,12 @@ def compute_gene_lmm(
                     "se_theta": np.nan,
                     "wald_z": np.nan,
                     "wald_p": np.nan,
+                    "wald_ok": False,
+                    "wald_p_adj": np.nan,
                     "lrt_stat": np.nan,
                     "lrt_p": np.nan,
-                    "p_primary": np.nan,
-                    "p_primary_source": "",
-                    "p_primary_adj": np.nan,
+                    "lrt_ok": False,
+                    "lrt_p_adj": np.nan,
                     "sigma_alpha": np.nan,
                     "tau": np.nan,
                     "converged_full": bool(res.get("converged_full", False)),
@@ -355,5 +356,6 @@ def compute_gene_lmm(
 
     out = pd.DataFrame(out_rows).sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
     if not out.empty:
-        out["p_primary_adj"] = out.groupby("focal_var", sort=False)["p_primary"].transform(_nan_fdr)
+        out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
+        out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
     return out

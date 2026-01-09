@@ -149,15 +149,27 @@ def write_gene_level_figures(
 
     if gene_lmm is not None and (not gene_lmm.empty):
         for focal_var, sub in _for_each_focal_var(gene_lmm):
-            out_path = os.path.join(output_dir, f"{prefix}_gene_lmm_volcano__{focal_var}.png")
-            _write_volcano(
-                sub,
-                effect_col="theta",
-                p_col="p_primary",
-                title=f"Gene-level LMM volcano ({focal_var})",
-                out_path=out_path,
-            )
-            written.append(out_path)
+            if "lrt_p" in sub.columns:
+                out_path = os.path.join(output_dir, f"{prefix}_gene_lmm_volcano_lrt__{focal_var}.png")
+                _write_volcano(
+                    sub,
+                    effect_col="theta",
+                    p_col="lrt_p",
+                    title=f"Gene-level LMM volcano (LRT; {focal_var})",
+                    out_path=out_path,
+                )
+                written.append(out_path)
+
+            if "wald_p" in sub.columns:
+                out_path = os.path.join(output_dir, f"{prefix}_gene_lmm_volcano_wald__{focal_var}.png")
+                _write_volcano(
+                    sub,
+                    effect_col="theta",
+                    p_col="wald_p",
+                    title=f"Gene-level LMM volcano (Wald; {focal_var})",
+                    out_path=out_path,
+                )
+                written.append(out_path)
 
             if "tau" in sub.columns:
                 out_path = os.path.join(output_dir, f"{prefix}_gene_lmm_tau_vs_effect__{focal_var}.png")
@@ -179,9 +191,9 @@ def write_gene_level_figures(
         and (not gene_lmm.empty)
     ):
         meta_cols = ["gene_id", "focal_var", "theta", "p"]
-        lmm_cols = ["gene_id", "focal_var", "theta", "p_primary"]
+        lmm_cols = ["gene_id", "focal_var", "theta", "lrt_p", "wald_p"]
         meta_sub = gene_meta[meta_cols].rename(columns={"theta": "theta_meta", "p": "p_meta"})
-        lmm_sub = gene_lmm[lmm_cols].rename(columns={"theta": "theta_lmm", "p_primary": "p_lmm"})
+        lmm_sub = gene_lmm[lmm_cols].rename(columns={"theta": "theta_lmm"})
         joined = meta_sub.merge(lmm_sub, on=["gene_id", "focal_var"], how="inner")
         if not joined.empty:
             for focal_var, sub in _for_each_focal_var(joined):
@@ -197,18 +209,39 @@ def write_gene_level_figures(
                 )
                 written.append(out_path)
 
-                tmp = sub.assign(neglog10_p_meta=_safe_neg_log10_p(sub["p_meta"]), neglog10_p_lmm=_safe_neg_log10_p(sub["p_lmm"]))
-                out_path = os.path.join(output_dir, f"{prefix}_gene_compare_p__{focal_var}.png")
-                _write_scatter(
-                    tmp,
-                    x_col="neglog10_p_meta",
-                    y_col="neglog10_p_lmm",
-                    title=f"-log10(p) comparison: meta vs LMM ({focal_var})",
-                    x_label="-log10(p) meta",
-                    y_label="-log10(p) lmm",
-                    out_path=out_path,
-                )
-                written.append(out_path)
+                if "lrt_p" in sub.columns:
+                    tmp = sub.assign(
+                        neglog10_p_meta=_safe_neg_log10_p(sub["p_meta"]),
+                        neglog10_p_lmm_lrt=_safe_neg_log10_p(sub["lrt_p"]),
+                    )
+                    out_path = os.path.join(output_dir, f"{prefix}_gene_compare_p_lrt__{focal_var}.png")
+                    _write_scatter(
+                        tmp,
+                        x_col="neglog10_p_meta",
+                        y_col="neglog10_p_lmm_lrt",
+                        title=f"-log10(p) comparison: meta vs LMM LRT ({focal_var})",
+                        x_label="-log10(p) meta",
+                        y_label="-log10(p) lmm (lrt)",
+                        out_path=out_path,
+                    )
+                    written.append(out_path)
+
+                if "wald_p" in sub.columns:
+                    tmp = sub.assign(
+                        neglog10_p_meta=_safe_neg_log10_p(sub["p_meta"]),
+                        neglog10_p_lmm_wald=_safe_neg_log10_p(sub["wald_p"]),
+                    )
+                    out_path = os.path.join(output_dir, f"{prefix}_gene_compare_p_wald__{focal_var}.png")
+                    _write_scatter(
+                        tmp,
+                        x_col="neglog10_p_meta",
+                        y_col="neglog10_p_lmm_wald",
+                        title=f"-log10(p) comparison: meta vs LMM Wald ({focal_var})",
+                        x_label="-log10(p) meta",
+                        y_label="-log10(p) lmm (wald)",
+                        out_path=out_path,
+                    )
+                    written.append(out_path)
 
     if gene_qc is not None and (not gene_qc.empty):
         for focal_var, sub in _for_each_focal_var(gene_qc):
