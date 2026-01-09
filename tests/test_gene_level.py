@@ -18,6 +18,30 @@ def test_dersimonian_laird_basic_case():
     assert 0.0 < out["p"] < 1.0
 
 
+def test_dersimonian_laird_single_guide_passthrough():
+    beta = np.array([0.5])
+    se = np.array([0.2])
+
+    out = gl._dersimonian_laird(beta, se)
+
+    assert out["m_guides_used"] == 1.0
+    assert out["tau2"] == 0.0
+    assert out["tau"] == 0.0
+    assert np.isclose(out["theta"], 0.5)
+    assert np.isclose(out["se_theta"], 0.2)
+    assert 0.0 < out["p"] < 1.0
+
+
+def test_dersimonian_laird_all_invalid_returns_nans():
+    beta = np.array([1.0, 2.0])
+    se = np.array([0.0, np.nan])
+
+    out = gl._dersimonian_laird(beta, se)
+
+    assert out["m_guides_used"] == 0.0
+    assert np.isnan(out["theta"])
+
+
 def test_compute_gene_meta_groups_and_fdr(monkeypatch):
     response = pd.DataFrame(
         {"s1": [0.0, 0.0, 0.0], "s2": [0.0, 0.0, 0.0]},
@@ -70,4 +94,3 @@ def test_compute_gene_meta_groups_and_fdr(monkeypatch):
     assert row_a["sign_agreement"] == 1.0
 
     assert out["p_adj"].between(0.0, 1.0).all()
-
