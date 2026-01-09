@@ -100,23 +100,24 @@ Goal: low-overhead gene-level inference using guide-level fits; also used as a v
 #### P3.4 — Plan A (Primary): Observation-level mixed model per gene (RI / RI+RS) + LRT
 Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B option 1; Decision C RI+RS).
 
-- [ ] Implement per-gene LMM with random intercepts and (when supported) random slopes for focal var(s) by guide:
-  - [ ] base: RI (random intercept only)
-  - [ ] preferred: RI+RS (random intercept + random slope)
-- [ ] Fit strategy:
-  - [ ] ML (`reml=False`) for LRT comparability
-  - [ ] convergence handling + iteration caps + clear diagnostics
-- [ ] Inference (Decision E):
-  - [ ] primary p-value: LRT of `theta_g=0` (full vs null; preserve RE structure)
-  - [ ] secondary: Wald z/p for reporting convenience
-- [ ] Rubric / fallbacks (Decision C + rubric section of plan doc):
-  - [ ] if `m_g < 3` -> RI only
-  - [ ] if RI+RS singular/non-convergent -> RI
-  - [ ] if RI fails -> fallback to Plan B
-- [ ] Output spec:
-  - [ ] `PMD_std_res_gene_lmm.tsv` (theta, SE, Wald z/p, LRT p, tau, sigma_alpha, model_used, converged, n_samples, m_guides)
-- [ ] Multiple testing:
-  - [ ] compute gene-level FDR for each focal var
+- [x] Implement per-gene LMM with random intercepts and (when supported) random slopes for focal var(s) by guide:
+  - [x] base: RI (random intercept only)
+  - [x] preferred: RI+RS (random intercept + random slope)
+- [x] Fit strategy:
+  - [x] ML (`reml=False`) for LRT comparability
+  - [x] convergence handling + iteration caps + clear diagnostics
+- [x] Inference (Decision E):
+  - [x] primary p-value: LRT of `theta_g=0` (full vs null; preserve RE structure)
+    - [x] if LRT is numerically invalid, `p_primary` falls back to Wald (explicitly labeled via `p_primary_source`)
+  - [x] secondary: Wald z/p for reporting convenience
+- [x] Rubric / fallbacks (Decision C + rubric section of plan doc):
+  - [x] if `m_g < 3` -> RI only (configurable via `min_guides_random_slope`)
+  - [x] if RI+RS singular/non-convergent -> RI
+  - [x] if RI fails -> fallback to Plan B (explicitly labeled as `meta_fallback`)
+- [x] Output spec:
+  - [x] `PMD_std_res_gene_lmm.tsv` (theta, SE, Wald z/p, LRT p, tau, sigma_alpha, model_used, converged, n_samples, m_guides)
+- [x] Multiple testing:
+  - [x] compute gene-level FDR for each focal var
 
 #### P3.5 — Robustness / Contamination Handling (Plan C)
 Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (Decision D).
@@ -149,7 +150,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-level` (enable)
   - [x] `--focal-vars ...`
   - [x] `--gene-id-col ...`
-  - [x] `--gene-methods ...` (currently supports: `meta`)
+  - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`)
   - [x] `--gene-out-dir ...`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
 - [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
