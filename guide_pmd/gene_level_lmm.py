@@ -79,6 +79,7 @@ def compute_gene_lmm(
     max_iter: int = 200,
     fallback_to_meta: bool = True,
     meta_results: pd.DataFrame | None = None,
+    selection_table: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Compute gene-level mixed model results (Plan A) with explicit, recorded fallbacks.
@@ -110,6 +111,22 @@ def compute_gene_lmm(
             add_intercept=add_intercept,
         )
 
+    genes_by_focal: dict[str, list[str]] | None = None
+    if selection_table is not None:
+        required = {"gene_id", "focal_var", "selected"}
+        missing = required.difference(set(selection_table.columns))
+        if missing:
+            raise ValueError(f"selection_table missing required column(s): {sorted(missing)}")
+        sel = selection_table.copy()
+        sel["gene_id"] = sel["gene_id"].astype(str)
+        sel["focal_var"] = sel["focal_var"].astype(str)
+        sel = sel[sel["selected"].astype(bool)]
+        genes_by_focal = {}
+        for focal_var in sorted(focal_vars):
+            focal_var = str(focal_var)
+            genes = sel.loc[sel["focal_var"] == focal_var, "gene_id"].unique().tolist()
+            genes_by_focal[focal_var] = sorted([str(g) for g in genes])
+
     out_rows: list[dict[str, object]] = []
     for focal_var in sorted(focal_vars):
         if focal_var not in mm.columns:
@@ -119,7 +136,9 @@ def compute_gene_lmm(
         fixed_cols_null = [c for c in fixed_cols_full if c != focal_var]
         random_slope_allowed = bool(allow_random_slope)
 
-        for gene_id in sorted(gene_ids.unique().tolist()):
+        genes_to_fit = genes_by_focal.get(str(focal_var), []) if genes_by_focal is not None else None
+        gene_iter = genes_to_fit if genes_to_fit is not None else sorted(gene_ids.unique().tolist())
+        for gene_id in gene_iter:
             guides = gene_ids.index[gene_ids == gene_id].tolist()
             guides = [g for g in guides if g in response_matrix.index]
             sub = response_matrix.loc[guides, :]
@@ -354,7 +373,34 @@ def compute_gene_lmm(
                 }
             )
 
-    out = pd.DataFrame(out_rows).sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
+    columns = [
+        "gene_id",
+        "focal_var",
+        "method",
+        "model",
+        "theta",
+        "se_theta",
+        "wald_z",
+        "wald_p",
+        "wald_ok",
+        "wald_p_adj",
+        "lrt_stat",
+        "lrt_p",
+        "lrt_ok",
+        "lrt_p_adj",
+        "sigma_alpha",
+        "tau",
+        "converged_full",
+        "converged_null",
+        "m_guides_total",
+        "m_guides_used",
+        "n_samples",
+        "n_obs",
+        "fit_error",
+    ]
+    out = pd.DataFrame(out_rows, columns=columns).sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(
+        drop=True
+    )
     if not out.empty:
         out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
         out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
