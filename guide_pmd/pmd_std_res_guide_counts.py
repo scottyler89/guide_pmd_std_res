@@ -227,7 +227,9 @@ def pmd_std_res_and_stats(input_file,
                             focal_vars: list[str] | None = None,
                             gene_id_col: int = 1,
                             gene_methods: list[str] | None = None,
-                            gene_out_dir: str | None = None):
+                            gene_out_dir: str | None = None,
+                            gene_figures: bool = False,
+                            gene_figures_dir: str | None = None):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -314,6 +316,10 @@ def pmd_std_res_and_stats(input_file,
             gene_mm = mm[keep_cols]
             gene_add_intercept = not (len(pre_regress_vars) > 0)
 
+            gene_meta = None
+            gene_lmm = None
+            gene_qc = None
+
             if "meta" in gene_methods:
                 gene_meta = gene_level_mod.compute_gene_meta(
                     gene_response,
@@ -355,6 +361,19 @@ def pmd_std_res_and_stats(input_file,
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_qc.tsv")
                 gene_qc.to_csv(gene_out_path, sep="\t", index=False)
+
+            if gene_figures:
+                from . import gene_level_figures as gene_level_figures_mod
+
+                if gene_figures_dir is None:
+                    gene_figures_dir = os.path.join(gene_out_dir, "gene_level_figures")
+                gene_level_figures_mod.write_gene_level_figures(
+                    gene_figures_dir,
+                    prefix="PMD_std_res",
+                    gene_meta=gene_meta,
+                    gene_lmm=gene_lmm,
+                    gene_qc=gene_qc,
+                )
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
@@ -404,6 +423,19 @@ def main():
         default=None,
         help="Optional output directory for gene-level files (default: same as -out_dir).",
     )
+    parser.add_argument(
+        "--gene-figures",
+        dest="gene_figures",
+        action="store_true",
+        help="Generate gene-level figures (requires matplotlib).",
+    )
+    parser.add_argument(
+        "--gene-figures-dir",
+        dest="gene_figures_dir",
+        type=str,
+        default=None,
+        help="Optional output directory for gene-level figures (default: <gene_out_dir>/gene_level_figures).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -420,7 +452,9 @@ def main():
                           focal_vars=args.focal_vars,
                           gene_id_col=args.gene_id_col,
                           gene_methods=args.gene_methods,
-                          gene_out_dir=args.gene_out_dir)
+                          gene_out_dir=args.gene_out_dir,
+                          gene_figures=args.gene_figures,
+                          gene_figures_dir=args.gene_figures_dir)
 
 
 
