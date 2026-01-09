@@ -5,5 +5,6 @@ Guide PMD Standardized Residuals
    :maxdepth: 2
 
    api
+   gene_level
 
 This package implements PMD standardized residuals and downstream statistics.

@@ -6,3 +6,22 @@ API Reference
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: guide_pmd.gene_level
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: guide_pmd.gene_level_lmm
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: guide_pmd.gene_level_qc
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: guide_pmd.gene_level_figures
+   :members:
+   :undoc-members:
+   :show-inheritance:
