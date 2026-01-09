@@ -4,9 +4,9 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
 from scipy.stats import false_discovery_control as fdr
 from scipy.stats import norm
+from scipy.stats import t as student_t
 
 
 def _nan_fdr(p_values: Sequence[float]) -> np.ndarray:
@@ -70,12 +70,19 @@ def fit_per_guide_ols(
     X = mm.to_numpy(dtype=float)
     coef_names = list(mm.columns)
 
-    rows: list[dict[str, object]] = []
-    for guide_id, y in response_matrix.iterrows():
-        y_arr = y.to_numpy(dtype=float)
-        try:
-            res = sm.OLS(y_arr, X).fit()
-        except Exception:
+    y_wide = response_matrix.to_numpy(dtype=float)
+    if not np.isfinite(y_wide).all():
+        raise ValueError("response_matrix must contain only finite values")
+
+    # Vectorized OLS across all guides:
+    #   Y is (n_samples x n_guides); X is (n_samples x p)
+    Y = y_wide.T
+    n_samples, p = X.shape
+    df_resid = int(n_samples - p)
+
+    if df_resid <= 0:
+        rows: list[dict[str, object]] = []
+        for guide_id in response_matrix.index.astype(str).tolist():
             for focal_var in focal_vars:
                 rows.append(
                     {
@@ -87,20 +94,41 @@ def fit_per_guide_ols(
                         "p": np.nan,
                     }
                 )
-            continue
+        return pd.DataFrame(rows)
 
-        for focal_var in focal_vars:
-            if focal_var not in coef_names:
-                raise ValueError(f"internal error: missing coef {focal_var}")  # pragma: no cover
-            idx = coef_names.index(focal_var)
+    XtX = X.T @ X
+    try:
+        XtX_inv = np.linalg.inv(XtX)
+    except np.linalg.LinAlgError:
+        XtX_inv = np.linalg.pinv(XtX)
+
+    beta_hat = XtX_inv @ (X.T @ Y)  # (p x n_guides)
+    resid = Y - (X @ beta_hat)  # (n_samples x n_guides)
+    rss = np.sum(resid**2, axis=0)
+    sigma2 = rss / float(df_resid)
+    diag_cov = np.diag(XtX_inv).astype(float)
+
+    rows = []
+    guide_ids = response_matrix.index.astype(str).tolist()
+    for focal_var in focal_vars:
+        if focal_var not in coef_names:
+            raise ValueError(f"internal error: missing coef {focal_var}")  # pragma: no cover
+        idx = coef_names.index(focal_var)
+        beta = beta_hat[idx, :].astype(float)
+        se = np.sqrt(np.maximum(0.0, sigma2 * diag_cov[idx])).astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t_vals = beta / se
+        p_vals = 2 * student_t.sf(np.abs(t_vals), df_resid)
+
+        for guide_id, b, s, t_val, p_val in zip(guide_ids, beta, se, t_vals, p_vals, strict=True):
             rows.append(
                 {
                     "guide_id": guide_id,
                     "focal_var": focal_var,
-                    "beta": float(res.params[idx]),
-                    "se": float(res.bse[idx]),
-                    "t": float(res.tvalues[idx]),
-                    "p": float(res.pvalues[idx]),
+                    "beta": float(b) if np.isfinite(b) else np.nan,
+                    "se": float(s) if np.isfinite(s) else np.nan,
+                    "t": float(t_val) if np.isfinite(t_val) else np.nan,
+                    "p": float(p_val) if np.isfinite(p_val) else np.nan,
                 }
             )
 
@@ -177,6 +205,7 @@ def compute_gene_meta(
     focal_vars: Sequence[str],
     gene_id_col: int = 1,
     add_intercept: bool = True,
+    per_guide_ols: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Compute gene-level random-effects meta-analysis from per-guide OLS fits.
@@ -190,12 +219,20 @@ def compute_gene_meta(
         raise ValueError("annotation_table index must not contain duplicates (guide_id)")
 
     mm = _align_model_matrix(model_matrix, list(response_matrix.columns))
-    per_guide = fit_per_guide_ols(
-        response_matrix,
-        mm,
-        focal_vars=focal_vars,
-        add_intercept=add_intercept,
-    )
+    if per_guide_ols is None:
+        per_guide = fit_per_guide_ols(
+            response_matrix,
+            mm,
+            focal_vars=focal_vars,
+            add_intercept=add_intercept,
+        )
+    else:
+        required = {"guide_id", "focal_var", "beta", "se"}
+        missing_cols = required.difference(set(per_guide_ols.columns))
+        if missing_cols:
+            raise ValueError(f"per_guide_ols missing required column(s): {sorted(missing_cols)}")
+        per_guide = per_guide_ols.copy()
+        per_guide = per_guide[per_guide["focal_var"].isin([str(v) for v in focal_vars])]
     per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
     if per_guide["gene_id"].isna().any():
         missing_guides = per_guide.loc[per_guide["gene_id"].isna(), "guide_id"].unique().tolist()

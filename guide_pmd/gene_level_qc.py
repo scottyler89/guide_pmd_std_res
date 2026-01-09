@@ -78,6 +78,7 @@ def compute_gene_qc(
     add_intercept: bool = True,
     trim_prop: float = 0.2,
     huber_c: float = 1.5,
+    per_guide_ols: pd.DataFrame | None = None,
     residual_matrix: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
@@ -97,12 +98,20 @@ def compute_gene_qc(
         raise ValueError("annotation_table index must not contain duplicates (guide_id)")
 
     mm = _align_model_matrix(model_matrix, list(response_matrix.columns))
-    per_guide = fit_per_guide_ols(
-        response_matrix,
-        mm,
-        focal_vars=focal_vars,
-        add_intercept=add_intercept,
-    )
+    if per_guide_ols is None:
+        per_guide = fit_per_guide_ols(
+            response_matrix,
+            mm,
+            focal_vars=focal_vars,
+            add_intercept=add_intercept,
+        )
+    else:
+        required = {"guide_id", "focal_var", "beta", "se"}
+        missing_cols = required.difference(set(per_guide_ols.columns))
+        if missing_cols:
+            raise ValueError(f"per_guide_ols missing required column(s): {sorted(missing_cols)}")
+        per_guide = per_guide_ols.copy()
+        per_guide = per_guide[per_guide["focal_var"].isin([str(v) for v in focal_vars])]
     per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
     if per_guide["gene_id"].isna().any():
         missing_guides = per_guide.loc[per_guide["gene_id"].isna(), "guide_id"].unique().tolist()

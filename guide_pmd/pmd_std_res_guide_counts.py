@@ -357,6 +357,19 @@ def pmd_std_res_and_stats(input_file,
             gene_meta = None
             gene_lmm = None
             gene_qc = None
+            per_guide_ols = None
+
+            needs_per_guide_ols = ("meta" in gene_methods) or ("qc" in gene_methods) or (
+                gene_figures and (gene_forest_genes is not None and len(gene_forest_genes) > 0)
+            )
+            if needs_per_guide_ols:
+                gene_mm_aligned = gene_level_mod._align_model_matrix(gene_mm, list(gene_response.columns))
+                per_guide_ols = gene_level_mod.fit_per_guide_ols(
+                    gene_response,
+                    gene_mm_aligned,
+                    focal_vars=focal_vars,
+                    add_intercept=gene_add_intercept,
+                )
 
             if "meta" in gene_methods:
                 gene_meta = gene_level_mod.compute_gene_meta(
@@ -366,6 +379,7 @@ def pmd_std_res_and_stats(input_file,
                     focal_vars=focal_vars,
                     gene_id_col=gene_id_col,
                     add_intercept=gene_add_intercept,
+                    per_guide_ols=per_guide_ols,
                 )
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
@@ -395,6 +409,7 @@ def pmd_std_res_and_stats(input_file,
                     gene_id_col=gene_id_col,
                     add_intercept=gene_add_intercept,
                     residual_matrix=resids_df,
+                    per_guide_ols=per_guide_ols,
                 )
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_qc.tsv")
@@ -421,14 +436,10 @@ def pmd_std_res_and_stats(input_file,
                     if not figures_ok:
                         print("gene-level forest plots: skipped (matplotlib not available)")
                     else:
-                        per_guide = gene_level_mod.fit_per_guide_ols(
-                            gene_response,
-                            gene_mm,
-                            focal_vars=focal_vars,
-                            add_intercept=gene_add_intercept,
-                        )
+                        if per_guide_ols is None:
+                            raise RuntimeError("internal error: per_guide_ols is required for forest plots")  # pragma: no cover
                         gene_ids = gene_level_mod._get_gene_ids(annotation_table, gene_id_col)
-                        per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
+                        per_guide = per_guide_ols.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
                         gene_level_figures_mod.write_gene_forest_plots(
                             per_guide,
                             gene_figures_dir,
