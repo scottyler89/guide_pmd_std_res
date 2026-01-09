@@ -26,6 +26,17 @@ def _safe_neg_log10_p(p: np.ndarray) -> np.ndarray:
     return -np.log10(p)
 
 
+def _sanitize_filename_component(value: str) -> str:
+    safe = []
+    for ch in str(value):
+        if ch.isalnum() or ch in {"-", "_", "."}:
+            safe.append(ch)
+        else:
+            safe.append("_")
+    out = "".join(safe).strip("_.")
+    return out or "value"
+
+
 def _write_scatter(
     df: pd.DataFrame,
     *,
@@ -215,3 +226,70 @@ def write_gene_level_figures(
 
     return written
 
+
+def write_gene_forest_plots(
+    per_guide_ols: pd.DataFrame,
+    output_dir: str,
+    *,
+    prefix: str,
+    forest_genes: list[str],
+    focal_vars: list[str] | None = None,
+) -> list[str]:
+    """
+    Write per-gene forest plots from per-guide OLS results.
+
+    This requires explicit gene selection (no implicit "top-N" heuristics).
+    """
+    if not forest_genes:
+        raise ValueError("forest_genes must not be empty")
+
+    required_cols = {"guide_id", "gene_id", "focal_var", "beta", "se"}
+    missing = required_cols.difference(per_guide_ols.columns)
+    if missing:
+        raise ValueError(f"per_guide_ols missing required column(s): {sorted(missing)}")
+
+    if focal_vars is not None:
+        focal_vars = list(focal_vars)
+        per_guide_ols = per_guide_ols[per_guide_ols["focal_var"].isin(focal_vars)]
+
+    per_guide_ols = per_guide_ols.copy()
+    per_guide_ols["gene_id"] = per_guide_ols["gene_id"].astype(str)
+    per_guide_ols = per_guide_ols[per_guide_ols["gene_id"].isin([str(g) for g in forest_genes])]
+
+    os.makedirs(output_dir, exist_ok=True)
+    plt = _require_matplotlib()
+    written: list[str] = []
+
+    for (gene_id, focal_var), sub in per_guide_ols.groupby(["gene_id", "focal_var"], sort=True):
+        sub = sub.replace([np.inf, -np.inf], np.nan).dropna(subset=["beta", "se"])
+        if sub.empty:
+            continue
+        sub = sub.sort_values(["beta", "guide_id"], kind="mergesort").reset_index(drop=True)
+
+        beta = sub["beta"].to_numpy(dtype=float)
+        se = sub["se"].to_numpy(dtype=float)
+        ci_lo = beta - 1.96 * se
+        ci_hi = beta + 1.96 * se
+        y = np.arange(sub.shape[0], dtype=float)
+
+        fig_h = max(3.0, 0.25 * float(sub.shape[0]) + 1.0)
+        fig = plt.figure(figsize=(7, fig_h), dpi=150)
+        ax = fig.add_subplot(1, 1, 1)
+        ax.hlines(y, ci_lo, ci_hi, color="black", linewidth=1)
+        ax.scatter(beta, y, color="black", s=14)
+        ax.axvline(0.0, color="gray", linewidth=0.8, linestyle="--")
+        ax.set_yticks(y)
+        ax.set_yticklabels(sub["guide_id"].astype(str).tolist())
+        ax.set_xlabel("beta (per-guide OLS) with 95% CI")
+        ax.set_title(f"Forest plot: {gene_id} ({focal_var})")
+        ax.grid(True, axis="x", linewidth=0.3, alpha=0.5)
+        fig.tight_layout()
+
+        gene_safe = _sanitize_filename_component(gene_id)
+        focal_safe = _sanitize_filename_component(focal_var)
+        out_path = os.path.join(output_dir, f"{prefix}_gene_forest__{focal_safe}__{gene_safe}.png")
+        fig.savefig(out_path)
+        plt.close(fig)
+        written.append(out_path)
+
+    return written
