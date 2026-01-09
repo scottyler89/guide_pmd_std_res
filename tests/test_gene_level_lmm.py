@@ -107,3 +107,32 @@ def test_compute_gene_lmm_falls_back_to_meta_explicitly(monkeypatch):
     assert set(out["method"]) == {"meta_fallback"}
     assert set(out["p_primary_source"]) == {"meta"}
     assert out["fit_error"].str.contains("lmm_failed").all()
+
+
+def test_compute_gene_lmm_falls_back_from_random_slope_to_ri(monkeypatch):
+    response, ann, mm = _make_synthetic()
+
+    orig_fit = glmm._fit_mixedlm
+
+    def fail_random_slope_then_fit_ri(endog, exog, *, groups, exog_re, max_iter):
+        if exog_re.shape[1] == 2:
+            return None, "forced random-slope failure"
+        return orig_fit(endog, exog, groups=groups, exog_re=exog_re, max_iter=max_iter)
+
+    monkeypatch.setattr(glmm, "_fit_mixedlm", fail_random_slope_then_fit_ri)
+
+    out = glmm.compute_gene_lmm(
+        response,
+        ann,
+        mm,
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        add_intercept=True,
+        allow_random_slope=True,
+        min_guides_random_slope=3,
+        fallback_to_meta=False,
+        max_iter=200,
+    )
+
+    assert out["method"].tolist() == ["lmm", "lmm"]
+    assert out["model"].tolist() == ["ri", "ri"]
