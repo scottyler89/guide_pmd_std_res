@@ -37,7 +37,7 @@ This script can be easily installed with pip:
 | `--gene-level`           | flag    | Enable **gene-level aggregation outputs** (opt-in; baseline outputs remain unchanged).                                                               | `False`      |
 | `--focal-vars`           | `list`  | One or more model-matrix column names to compute gene-level effects for (**required** when `--gene-level`).                                          | `None`       |
 | `--gene-id-col`          | `int`   | 0-based column index in the original input file for the gene id (0 is the guide id/index).                                                          | `1`          |
-| `--gene-methods`         | `list`  | Gene-level methods to run (currently supports: `meta`, `lmm`).                                                                                        | `["meta"]`   |
+| `--gene-methods`         | `list`  | Gene-level methods to run (currently supports: `meta`, `lmm`, `qc`).                                                                                  | `["meta"]`   |
 | `--gene-out-dir`         | `str`   | Optional output directory for gene-level files (default: same as `-out_dir`).                                                                        | `None`       |
 
 ---
@@ -57,7 +57,7 @@ python -m guide_pmd.pmd_std_res_guide_counts \
     -file_type tsv \
     --gene-level \
     --focal-vars treatment \
-    --gene-methods lmm meta
+    --gene-methods lmm meta qc
 ```
 
 ---
@@ -73,7 +73,7 @@ The script produces the following results:
 
 All outputs are saved in the specified output directory.
 
-When gene-level outputs are enabled, additional files are created with new filenames (e.g., `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`) and **no existing baseline files are modified**.
+When gene-level outputs are enabled, additional files are created with new filenames (e.g., `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`) and **no existing baseline files are modified**.
 
 ---
 
