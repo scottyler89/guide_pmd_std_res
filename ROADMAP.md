@@ -127,9 +127,9 @@ Principles (from `DEV_RUBRIC.md`):
 - Selection must be statistically grounded and inspectable (FDR control, formal tests, deterministic audit sampling).
 
 Phase A — Add the missing statistics needed for principled selection
-- [ ] Add Cochran’s Q heterogeneity p-value to meta output (`Q_p`) with df=`m_guides_used-1` when `m_guides_used>=2`.
-- [ ] Add FDR-adjusted heterogeneity p-value per focal var (`Q_p_adj`).
-- [ ] Document interpretation + limitations (Q-test is calibrated under fixed-effect null; still useful as a screening metric).
+- [x] Add Cochran’s Q heterogeneity p-value to meta output (`Q_p`) with df=`m_guides_used-1` when `m_guides_used>=2`.
+- [x] Add FDR-adjusted heterogeneity p-value per focal var (`Q_p_adj`).
+- [x] Document interpretation + limitations (Q-test is calibrated under fixed-effect null; still useful as a screening metric).
 
 Phase B — Define explicit feasibility gates (identifiability, not heuristics)
 - [ ] Implement design-matrix rank checks per focal var (skip if not identifiable).

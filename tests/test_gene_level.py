@@ -81,6 +81,9 @@ def test_compute_gene_meta_groups_and_fdr(monkeypatch):
         "tau",
         "tau2",
         "Q",
+        "Q_df",
+        "Q_p",
+        "Q_p_adj",
         "I2",
         "m_guides_total",
         "m_guides_used",
@@ -92,5 +95,8 @@ def test_compute_gene_meta_groups_and_fdr(monkeypatch):
     row_a = out.loc[out["gene_id"] == "A"].iloc[0]
     assert np.isclose(row_a["theta"], 1.0)
     assert row_a["sign_agreement"] == 1.0
+    assert np.isclose(row_a["Q_df"], 1.0)
+    assert np.isclose(row_a["Q_p"], 1.0)
 
     assert out["p_adj"].between(0.0, 1.0).all()
+    assert out["Q_p_adj"].between(0.0, 1.0).all()

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 from scipy.stats import false_discovery_control as fdr
+from scipy.stats import chi2
 from scipy.stats import norm
 from scipy.stats import t as student_t
 
@@ -150,6 +151,8 @@ def _dersimonian_laird(beta: np.ndarray, se: np.ndarray) -> dict[str, float]:
             "tau2": np.nan,
             "tau": np.nan,
             "Q": np.nan,
+            "Q_df": np.nan,
+            "Q_p": np.nan,
             "I2": np.nan,
             "m_guides_used": 0.0,
         }
@@ -167,6 +170,8 @@ def _dersimonian_laird(beta: np.ndarray, se: np.ndarray) -> dict[str, float]:
             "tau2": 0.0,
             "tau": 0.0,
             "Q": 0.0,
+            "Q_df": 0.0,
+            "Q_p": np.nan,
             "I2": 0.0,
             "m_guides_used": 1.0,
         }
@@ -176,6 +181,7 @@ def _dersimonian_laird(beta: np.ndarray, se: np.ndarray) -> dict[str, float]:
     theta_fe = float(np.sum(w * beta) / w_sum)
     Q = float(np.sum(w * (beta - theta_fe) ** 2))
     df = m - 1
+    Q_p = float(chi2.sf(Q, df=df)) if (np.isfinite(Q) and df > 0) else np.nan
     C = float(w_sum - (np.sum(w**2) / w_sum))
     tau2 = float(max(0.0, (Q - df) / C)) if C > 0 else 0.0
     w_re = 1.0 / (se**2 + tau2)
@@ -192,6 +198,8 @@ def _dersimonian_laird(beta: np.ndarray, se: np.ndarray) -> dict[str, float]:
         "tau2": tau2,
         "tau": float(np.sqrt(tau2)),
         "Q": Q,
+        "Q_df": float(df),
+        "Q_p": Q_p,
         "I2": I2,
         "m_guides_used": float(m),
     }
@@ -264,6 +272,9 @@ def compute_gene_meta(
                 "tau": meta["tau"],
                 "tau2": meta["tau2"],
                 "Q": meta["Q"],
+                "Q_df": meta["Q_df"],
+                "Q_p": meta["Q_p"],
+                "Q_p_adj": np.nan,  # filled below per focal var
                 "I2": meta["I2"],
                 "m_guides_total": float(sub.shape[0]),
                 "m_guides_used": meta["m_guides_used"],
@@ -274,4 +285,5 @@ def compute_gene_meta(
     out = pd.DataFrame(out_rows).sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
     if not out.empty:
         out["p_adj"] = out.groupby("focal_var", sort=False)["p"].transform(_nan_fdr)
+        out["Q_p_adj"] = out.groupby("focal_var", sort=False)["Q_p"].transform(_nan_fdr)
     return out

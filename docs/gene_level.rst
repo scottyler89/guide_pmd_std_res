@@ -58,8 +58,15 @@ Output: ``PMD_std_res_gene_meta.tsv``
 Columns include (per gene × focal covariate):
 
 - ``theta``, ``se_theta``, ``z``, ``p``, ``p_adj``
-- heterogeneity diagnostics: ``tau``, ``tau2``, ``Q``, ``I2``
+- heterogeneity diagnostics: ``tau``, ``tau2``, ``Q``, ``Q_df``, ``Q_p``, ``Q_p_adj``, ``I2``
 - QC: ``sign_agreement``, ``m_guides_total``, ``m_guides_used``
+
+Notes on heterogeneity
+^^^^^^^^^^^^^^^^^^^^^^
+
+The Cochran’s Q test p-value (``Q_p``) is computed when ``m_guides_used >= 2`` (df = ``m_guides_used - 1``).
+It is calibrated under a fixed-effect null and is used here as a **screening/diagnostic** signal to identify genes
+where guide-level effects appear unusually heterogeneous.
 
 Plan A: Observation-level mixed model (``lmm``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -97,7 +104,7 @@ Columns include robust summaries:
 Figures
 -------
 
-If enabled, figures are written under ``gene_level_figures/`` with deterministic filenames.
+If enabled, figures are written under ``<out_dir>/figures/gene_level/`` with deterministic filenames.
 
 Forest plots are generated only for gene ids explicitly provided via ``--gene-forest-genes``.
 
