@@ -132,20 +132,20 @@ Phase A — Add the missing statistics needed for principled selection
 - [x] Document interpretation + limitations (Q-test is calibrated under fixed-effect null; still useful as a screening metric).
 
 Phase B — Define explicit feasibility gates (identifiability, not heuristics)
-- [ ] Implement design-matrix rank checks per focal var (skip if not identifiable).
-- [ ] Implement response degeneracy checks (skip if gene has all-zero variance across observations).
-- [ ] Implement minimum guide count gate for any mixed model (`m_guides >= 2`).
-- [ ] Keep these gates in shared utilities and surface the reason in outputs (no silent skipping).
+- [x] Implement design-matrix rank checks per focal var (skip if not identifiable).
+- [x] Implement response degeneracy checks (skip if gene has all-zero variance across observations).
+- [x] Implement minimum guide count gate for any mixed model (`m_guides >= 2`).
+- [x] Keep these gates in shared utilities and surface the reason in outputs (no silent skipping).
 
 Phase C — Selection policy (FDR-driven + deterministic audit)
-- [ ] Implement a selection config object (e.g., `GeneLmmSelectionConfig`) with explicit defaults:
-  - [ ] scope: `all` | `meta_fdr` | `meta_or_het_fdr` | `explicit` | `none`
-  - [ ] meta FDR threshold `q_meta` (per focal var; uses Plan B `p_adj`)
-  - [ ] heterogeneity FDR threshold `q_het` (per focal var; uses `Q_p_adj`)
-  - [ ] deterministic audit sample: `audit_n`, `audit_seed`
-  - [ ] optional compute cap: `max_genes_per_focal_var` (explicit budget; off by default)
-- [ ] Implement deterministic audit sampling from the complement set to monitor calibration and fit stability.
-- [ ] Ensure selection is reproducible (seeded RNG, stable sorting).
+- [x] Implement a selection config object (e.g., `GeneLmmSelectionConfig`) with explicit defaults:
+  - [x] scope: `all` | `meta_fdr` | `meta_or_het_fdr` | `explicit` | `none`
+  - [x] meta FDR threshold `q_meta` (per focal var; uses Plan B `p_adj`)
+  - [x] heterogeneity FDR threshold `q_het` (per focal var; uses `Q_p_adj`)
+  - [x] deterministic audit sample: `audit_n`, `audit_seed`
+  - [x] optional compute cap: `max_genes_per_focal_var` (explicit budget; off by default)
+- [x] Implement deterministic audit sampling from the complement set to monitor calibration and fit stability.
+- [x] Ensure selection is reproducible (seeded RNG, stable sorting).
 
 Phase D — Make selection inspectable via additive artifacts
 - [ ] Add `PMD_std_res_gene_lmm_selection.tsv` with per `(gene_id, focal_var)`:
