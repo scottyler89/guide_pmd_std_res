@@ -234,7 +234,8 @@ def pmd_std_res_and_stats(input_file,
                             gene_methods: list[str] | None = None,
                             gene_out_dir: str | None = None,
                             gene_figures: bool = False,
-                            gene_figures_dir: str | None = None):
+                            gene_figures_dir: str | None = None,
+                            gene_forest_genes: list[str] | None = None):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -379,6 +380,22 @@ def pmd_std_res_and_stats(input_file,
                     gene_lmm=gene_lmm,
                     gene_qc=gene_qc,
                 )
+                if gene_forest_genes is not None and len(gene_forest_genes) > 0:
+                    per_guide = gene_level_mod.fit_per_guide_ols(
+                        gene_response,
+                        gene_mm,
+                        focal_vars=focal_vars,
+                        add_intercept=gene_add_intercept,
+                    )
+                    gene_ids = gene_level_mod._get_gene_ids(annotation_table, gene_id_col)
+                    per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
+                    gene_level_figures_mod.write_gene_forest_plots(
+                        per_guide,
+                        gene_figures_dir,
+                        prefix="PMD_std_res",
+                        forest_genes=[str(g) for g in gene_forest_genes],
+                        focal_vars=[str(v) for v in focal_vars],
+                    )
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
@@ -441,6 +458,14 @@ def main():
         default=None,
         help="Optional output directory for gene-level figures (default: <gene_out_dir>/gene_level_figures).",
     )
+    parser.add_argument(
+        "--gene-forest-genes",
+        dest="gene_forest_genes",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Optional gene id(s) to generate per-guide forest plots for (requires --gene-figures).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -459,7 +484,8 @@ def main():
                           gene_methods=args.gene_methods,
                           gene_out_dir=args.gene_out_dir,
                           gene_figures=args.gene_figures,
-                          gene_figures_dir=args.gene_figures_dir)
+                          gene_figures_dir=args.gene_figures_dir,
+                          gene_forest_genes=args.gene_forest_genes)
 
 
 
