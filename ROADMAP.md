@@ -108,9 +108,8 @@ Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B opti
   - [x] ML (`reml=False`) for LRT comparability
   - [x] convergence handling + iteration caps + clear diagnostics
 - [x] Inference (Decision E):
-  - [x] primary p-value: LRT of `theta_g=0` (full vs null; preserve RE structure)
-    - [x] if LRT is numerically invalid, `p_primary` falls back to Wald (explicitly labeled via `p_primary_source`)
-  - [x] secondary: Wald z/p for reporting convenience
+  - [x] report LRT and Wald in separate columns (`lrt_*` vs `wald_*`)
+  - [x] mark numerical validity explicitly (`lrt_ok`, `wald_ok`)
 - [x] Rubric / fallbacks (Decision C + rubric section of plan doc):
   - [x] if `m_g < 3` -> RI only (configurable via `min_guides_random_slope`)
   - [x] if RI+RS singular/non-convergent -> RI
@@ -119,6 +118,51 @@ Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B opti
   - [x] `PMD_std_res_gene_lmm.tsv` (theta, SE, Wald z/p, LRT p, tau, sigma_alpha, model_used, converged, n_samples, m_guides)
 - [x] Multiple testing:
   - [x] compute gene-level FDR for each focal var
+
+#### P3.4.1 — Plan A Scope Selection (Statistically grounded; default-on)
+Goal: run Plan A where it is identifiable and informative, without wasting compute or producing misleading fits.
+
+Principles (from `DEV_RUBRIC.md`):
+- Core analysis code must not hide heuristics; policy lives in consumer/orchestration layers and must be explicit + configurable.
+- Selection must be statistically grounded and inspectable (FDR control, formal tests, deterministic audit sampling).
+
+Phase A — Add the missing statistics needed for principled selection
+- [ ] Add Cochran’s Q heterogeneity p-value to meta output (`Q_p`) with df=`m_guides_used-1` when `m_guides_used>=2`.
+- [ ] Add FDR-adjusted heterogeneity p-value per focal var (`Q_p_adj`).
+- [ ] Document interpretation + limitations (Q-test is calibrated under fixed-effect null; still useful as a screening metric).
+
+Phase B — Define explicit feasibility gates (identifiability, not heuristics)
+- [ ] Implement design-matrix rank checks per focal var (skip if not identifiable).
+- [ ] Implement response degeneracy checks (skip if gene has all-zero variance across observations).
+- [ ] Implement minimum guide count gate for any mixed model (`m_guides >= 2`).
+- [ ] Keep these gates in shared utilities and surface the reason in outputs (no silent skipping).
+
+Phase C — Selection policy (FDR-driven + deterministic audit)
+- [ ] Implement a selection config object (e.g., `GeneLmmSelectionConfig`) with explicit defaults:
+  - [ ] scope: `all` | `meta_fdr` | `meta_or_het_fdr` | `explicit` | `none`
+  - [ ] meta FDR threshold `q_meta` (per focal var; uses Plan B `p_adj`)
+  - [ ] heterogeneity FDR threshold `q_het` (per focal var; uses `Q_p_adj`)
+  - [ ] deterministic audit sample: `audit_n`, `audit_seed`
+  - [ ] optional compute cap: `max_genes_per_focal_var` (explicit budget; off by default)
+- [ ] Implement deterministic audit sampling from the complement set to monitor calibration and fit stability.
+- [ ] Ensure selection is reproducible (seeded RNG, stable sorting).
+
+Phase D — Make selection inspectable via additive artifacts
+- [ ] Add `PMD_std_res_gene_lmm_selection.tsv` with per `(gene_id, focal_var)`:
+  - [ ] `selected` (bool), `selection_reason` (enum), and `skip_reason` (enum)
+  - [ ] key inputs used for the decision (e.g., `meta_p_adj`, `Q_p_adj`, `m_guides_used`)
+- [ ] Update gene-level progress reporting to include selection counts and fit outcome counts.
+
+Phase E — Run Plan A only on the selected set (still default-on)
+- [ ] Add `genes_to_fit` / `selection_table` support so LMM fitting does not iterate over all genes unnecessarily.
+- [ ] Run Plan A per focal var on selected genes only; concatenate results with stable sorting.
+- [ ] Preserve current explicit failure behavior (`meta_fallback` on fit failure; no silent fallbacks).
+
+Phase F — Tests + real-data regression
+- [ ] Unit tests for `Q_p` / `Q_p_adj` (edge cases: `m=0/1/2`, zero variance).
+- [ ] Unit tests for selection determinism + reason labeling.
+- [ ] Integration test: default selection produces `PMD_std_res_gene_lmm_selection.tsv` and does not change baseline TSV bytes.
+- [ ] Add a local, non-committed st941c prototype runner doc/snippet that uses `--std-res-file` to validate behavior quickly.
 
 #### P3.5 — Robustness / Contamination Handling (Plan C)
 Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (Decision D).
@@ -144,7 +188,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
 - [x] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
 - [x] Per-gene forest plot (per-guide slopes + SE) for explicit genes (no implicit top-N heuristic).
-- [x] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
+- [x] Output directory + naming convention (e.g., `figures/gene_level/` with deterministic filenames).
 
 #### P3.7 — CLI + API (additive; no baseline changes)
 - [x] Add CLI flags (additive; supports opt-out):
