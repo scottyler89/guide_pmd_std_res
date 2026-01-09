@@ -86,6 +86,21 @@ They are kept in separate columns so they cannot be conflated. If the LRT is num
 
 Output: ``PMD_std_res_gene_lmm.tsv``
 
+Plan A scope selection
+^^^^^^^^^^^^^^^^^^^^^^
+
+Plan A is **not** fit for every gene by default. Instead, the pipeline computes an explicit selection table and
+fits the mixed model only for the selected (and feasible) ``(gene_id, focal_var)`` rows.
+
+Output: ``PMD_std_res_gene_lmm_selection.tsv``
+
+This table records:
+
+- feasibility gates (e.g., non-identifiable focal var, degenerate response, insufficient guides)
+- selection decisions and reasons (meta FDR, heterogeneity FDR, deterministic audit sampling)
+
+This keeps the mixed-model layer statistically grounded, inspectable, and computationally bounded.
+
 Plan C: Diagnostics / robust summaries (``qc``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -238,7 +238,14 @@ def pmd_std_res_and_stats(input_file,
                             gene_figures: bool = True,
                             gene_figures_dir: str | None = None,
                             gene_forest_genes: list[str] | None = None,
-                            gene_progress: bool = False):
+                            gene_progress: bool = False,
+                            gene_lmm_scope: str = "meta_or_het_fdr",
+                            gene_lmm_q_meta: float = 0.1,
+                            gene_lmm_q_het: float = 0.1,
+                            gene_lmm_audit_n: int = 50,
+                            gene_lmm_audit_seed: int = 123456,
+                            gene_lmm_max_genes_per_focal_var: int | None = None,
+                            gene_lmm_explicit_genes: list[str] | None = None):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -357,11 +364,12 @@ def pmd_std_res_and_stats(input_file,
                 return std_res, stats_df, resids_df, comb_stats
 
             gene_meta = None
+            gene_lmm_selection = None
             gene_lmm = None
             gene_qc = None
             per_guide_ols = None
 
-            needs_per_guide_ols = ("meta" in gene_methods) or ("qc" in gene_methods) or (
+            needs_per_guide_ols = ("meta" in gene_methods) or ("lmm" in gene_methods) or ("qc" in gene_methods) or (
                 gene_figures and (gene_forest_genes is not None and len(gene_forest_genes) > 0)
             )
             if needs_per_guide_ols:
@@ -373,7 +381,8 @@ def pmd_std_res_and_stats(input_file,
                     add_intercept=gene_add_intercept,
                 )
 
-            if "meta" in gene_methods:
+            needs_gene_meta = ("meta" in gene_methods) or ("lmm" in gene_methods)
+            if needs_gene_meta:
                 gene_meta = gene_level_mod.compute_gene_meta(
                     gene_response,
                     annotation_table,
@@ -383,11 +392,43 @@ def pmd_std_res_and_stats(input_file,
                     add_intercept=gene_add_intercept,
                     per_guide_ols=per_guide_ols,
                 )
-                os.makedirs(gene_out_dir, exist_ok=True)
-                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
-                gene_meta.to_csv(gene_out_path, sep="\t", index=False)
+                if "meta" in gene_methods:
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
+                    gene_meta.to_csv(gene_out_path, sep="\t", index=False)
             if "lmm" in gene_methods:
+                from . import gene_level_selection as gene_level_selection_mod
                 from . import gene_level_lmm as gene_level_lmm_mod
+
+                sel_cfg = gene_level_selection_mod.GeneLmmSelectionConfig(
+                    scope=str(gene_lmm_scope),
+                    q_meta=float(gene_lmm_q_meta),
+                    q_het=float(gene_lmm_q_het),
+                    audit_n=int(gene_lmm_audit_n),
+                    audit_seed=int(gene_lmm_audit_seed),
+                    max_genes_per_focal_var=gene_lmm_max_genes_per_focal_var,
+                    explicit_genes=tuple([] if gene_lmm_explicit_genes is None else [str(g) for g in gene_lmm_explicit_genes]),
+                )
+                sel_cfg.validate()
+
+                feasibility = gene_level_selection_mod.compute_gene_lmm_feasibility(
+                    gene_response,
+                    annotation_table,
+                    gene_mm,
+                    focal_vars=[str(v) for v in focal_vars],
+                    gene_id_col=gene_id_col,
+                    add_intercept=gene_add_intercept,
+                )
+                if gene_meta is None:
+                    raise RuntimeError("internal error: gene_meta is required for lmm selection")  # pragma: no cover
+                gene_lmm_selection = gene_level_selection_mod.compute_gene_lmm_selection(
+                    gene_meta,
+                    feasibility,
+                    config=sel_cfg,
+                )
+                os.makedirs(gene_out_dir, exist_ok=True)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_selection.tsv")
+                gene_lmm_selection.to_csv(gene_out_path, sep="\t", index=False)
 
                 gene_lmm = gene_level_lmm_mod.compute_gene_lmm(
                     gene_response,
@@ -396,6 +437,8 @@ def pmd_std_res_and_stats(input_file,
                     focal_vars=focal_vars,
                     gene_id_col=gene_id_col,
                     add_intercept=gene_add_intercept,
+                    meta_results=gene_meta,
+                    selection_table=gene_lmm_selection,
                 )
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
@@ -454,12 +497,37 @@ def pmd_std_res_and_stats(input_file,
                 msg_parts = []
                 if gene_meta is not None:
                     msg_parts.append(f"meta={gene_meta.shape[0]}")
+                if gene_lmm_selection is not None:
+                    msg_parts.append(f"lmm_selection={gene_lmm_selection.shape[0]}")
                 if gene_lmm is not None:
                     msg_parts.append(f"lmm={gene_lmm.shape[0]}")
                 if gene_qc is not None:
                     msg_parts.append(f"qc={gene_qc.shape[0]}")
                 if msg_parts:
                     print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})")
+                if gene_lmm_selection is not None and (not gene_lmm_selection.empty):
+                    n_total = int(gene_lmm_selection.shape[0])
+                    n_feasible = int(gene_lmm_selection["feasible"].sum())
+                    n_selected = int(gene_lmm_selection["selected"].sum())
+                    print(
+                        "gene-level lmm selection:",
+                        f"selected={n_selected}/{n_total}",
+                        f"(feasible={n_feasible}; scope={gene_lmm_scope}; q_meta={gene_lmm_q_meta}; q_het={gene_lmm_q_het}; audit_n={gene_lmm_audit_n}; cap={gene_lmm_max_genes_per_focal_var})",
+                    )
+                    reason_counts = (
+                        gene_lmm_selection.loc[gene_lmm_selection["selection_reason"] != "", "selection_reason"]
+                        .value_counts(dropna=False)
+                        .to_dict()
+                    )
+                    if reason_counts:
+                        print("gene-level lmm selection reasons:", reason_counts)
+                    skip_counts = (
+                        gene_lmm_selection.loc[gene_lmm_selection["skip_reason"] != "", "skip_reason"]
+                        .value_counts(dropna=False)
+                        .to_dict()
+                    )
+                    if skip_counts:
+                        print("gene-level lmm skip reasons:", skip_counts)
                 if gene_lmm is not None and (not gene_lmm.empty):
                     method_counts = gene_lmm["method"].value_counts(dropna=False).to_dict()
                     print("gene-level lmm methods:", method_counts)
@@ -559,6 +627,57 @@ def main():
         action="store_true",
         help="Print a short summary of gene-level execution (counts + fallbacks).",
     )
+    parser.add_argument(
+        "--gene-lmm-scope",
+        dest="gene_lmm_scope",
+        type=str,
+        choices=["all", "meta_fdr", "meta_or_het_fdr", "explicit", "none"],
+        default="meta_or_het_fdr",
+        help="Plan A (LMM) scope selection policy (default: meta_or_het_fdr).",
+    )
+    parser.add_argument(
+        "--gene-lmm-q-meta",
+        dest="gene_lmm_q_meta",
+        type=float,
+        default=0.1,
+        help="Plan A selection: meta FDR threshold q_meta (default: 0.1).",
+    )
+    parser.add_argument(
+        "--gene-lmm-q-het",
+        dest="gene_lmm_q_het",
+        type=float,
+        default=0.1,
+        help="Plan A selection: heterogeneity FDR threshold q_het (default: 0.1).",
+    )
+    parser.add_argument(
+        "--gene-lmm-audit-n",
+        dest="gene_lmm_audit_n",
+        type=int,
+        default=50,
+        help="Plan A selection: deterministic audit sample size per focal var (default: 50).",
+    )
+    parser.add_argument(
+        "--gene-lmm-audit-seed",
+        dest="gene_lmm_audit_seed",
+        type=int,
+        default=123456,
+        help="Plan A selection: audit RNG seed (default: 123456).",
+    )
+    parser.add_argument(
+        "--gene-lmm-max-genes-per-focal-var",
+        dest="gene_lmm_max_genes_per_focal_var",
+        type=int,
+        default=None,
+        help="Optional cap on selected genes per focal var (default: no cap).",
+    )
+    parser.add_argument(
+        "--gene-lmm-explicit-genes",
+        dest="gene_lmm_explicit_genes",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Gene id(s) to fit with Plan A when --gene-lmm-scope=explicit.",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -580,7 +699,14 @@ def main():
                           gene_figures=args.gene_figures,
                           gene_figures_dir=args.gene_figures_dir,
                           gene_forest_genes=args.gene_forest_genes,
-                          gene_progress=args.gene_progress)
+                          gene_progress=args.gene_progress,
+                          gene_lmm_scope=args.gene_lmm_scope,
+                          gene_lmm_q_meta=args.gene_lmm_q_meta,
+                          gene_lmm_q_het=args.gene_lmm_q_het,
+                          gene_lmm_audit_n=args.gene_lmm_audit_n,
+                          gene_lmm_audit_seed=args.gene_lmm_audit_seed,
+                          gene_lmm_max_genes_per_focal_var=args.gene_lmm_max_genes_per_focal_var,
+                          gene_lmm_explicit_genes=args.gene_lmm_explicit_genes)
 
 
 

@@ -81,6 +81,7 @@ def test_gene_level_defaults_and_opt_out_preserves_baseline(tmp_path, monkeypatc
         assert _sha256(out_default / name) == _sha256(out_optout / name)
 
     assert (out_default / "gene_level" / "PMD_std_res_gene_meta.tsv").is_file()
+    assert (out_default / "gene_level" / "PMD_std_res_gene_lmm_selection.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_lmm.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_qc.tsv").is_file()
     assert not (out_optout / "gene_level").exists()

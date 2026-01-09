@@ -148,20 +148,20 @@ Phase C — Selection policy (FDR-driven + deterministic audit)
 - [x] Ensure selection is reproducible (seeded RNG, stable sorting).
 
 Phase D — Make selection inspectable via additive artifacts
-- [ ] Add `PMD_std_res_gene_lmm_selection.tsv` with per `(gene_id, focal_var)`:
-  - [ ] `selected` (bool), `selection_reason` (enum), and `skip_reason` (enum)
-  - [ ] key inputs used for the decision (e.g., `meta_p_adj`, `Q_p_adj`, `m_guides_used`)
-- [ ] Update gene-level progress reporting to include selection counts and fit outcome counts.
+- [x] Add `PMD_std_res_gene_lmm_selection.tsv` with per `(gene_id, focal_var)`:
+  - [x] `selected` (bool), `selection_reason` (enum), and `skip_reason` (enum)
+  - [x] key inputs used for the decision (e.g., `meta_p_adj`, `Q_p_adj`, `m_guides_used`)
+- [x] Update gene-level progress reporting to include selection counts and fit outcome counts.
 
 Phase E — Run Plan A only on the selected set (still default-on)
-- [ ] Add `genes_to_fit` / `selection_table` support so LMM fitting does not iterate over all genes unnecessarily.
-- [ ] Run Plan A per focal var on selected genes only; concatenate results with stable sorting.
-- [ ] Preserve current explicit failure behavior (`meta_fallback` on fit failure; no silent fallbacks).
+- [x] Add `genes_to_fit` / `selection_table` support so LMM fitting does not iterate over all genes unnecessarily.
+- [x] Run Plan A per focal var on selected genes only; concatenate results with stable sorting.
+- [x] Preserve current explicit failure behavior (`meta_fallback` on fit failure; no silent fallbacks).
 
 Phase F — Tests + real-data regression
 - [ ] Unit tests for `Q_p` / `Q_p_adj` (edge cases: `m=0/1/2`, zero variance).
-- [ ] Unit tests for selection determinism + reason labeling.
-- [ ] Integration test: default selection produces `PMD_std_res_gene_lmm_selection.tsv` and does not change baseline TSV bytes.
+- [x] Unit tests for selection determinism + reason labeling.
+- [x] Integration test: default selection produces `PMD_std_res_gene_lmm_selection.tsv` and does not change baseline TSV bytes.
 - [ ] Add a local, non-committed st941c prototype runner doc/snippet that uses `--std-res-file` to validate behavior quickly.
 
 #### P3.5 — Robustness / Contamination Handling (Plan C)
