@@ -41,7 +41,7 @@ def _get_gene_ids(annotation_table: pd.DataFrame, gene_id_col: int) -> pd.Series
     return gene_ids
 
 
-def _fit_per_guide_ols(
+def fit_per_guide_ols(
     response_matrix: pd.DataFrame,
     model_matrix: pd.DataFrame,
     *,
@@ -190,7 +190,7 @@ def compute_gene_meta(
         raise ValueError("annotation_table index must not contain duplicates (guide_id)")
 
     mm = _align_model_matrix(model_matrix, list(response_matrix.columns))
-    per_guide = _fit_per_guide_ols(
+    per_guide = fit_per_guide_ols(
         response_matrix,
         mm,
         focal_vars=focal_vars,

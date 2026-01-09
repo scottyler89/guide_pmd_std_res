@@ -59,7 +59,7 @@ def test_compute_gene_meta_groups_and_fdr(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(gl, "_fit_per_guide_ols", fake_fit_per_guide_ols)
+    monkeypatch.setattr(gl, "fit_per_guide_ols", fake_fit_per_guide_ols)
 
     out = gl.compute_gene_meta(
         response,
