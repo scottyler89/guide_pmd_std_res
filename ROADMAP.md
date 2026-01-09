@@ -165,7 +165,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
 
 #### P3.9 — Performance / UX
-- [ ] Add progress reporting (genes processed, failures, fallbacks).
+- [x] Add progress reporting (genes processed, failures, fallbacks).
 - [ ] Add optional parallelization (careful: determinism + stable sorting).
 - [ ] Add caching of per-gene fits (optional; keyed by inputs) to speed iteration.
 
