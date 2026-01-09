@@ -54,6 +54,7 @@ def test_gene_level_figures_are_written(tmp_path, monkeypatch):
         focal_vars=["treatment"],
         gene_methods=["meta", "qc"],
         gene_figures=True,
+        gene_forest_genes=["A"],
     )
 
     figures_dir = out_dir / "gene_level_figures"
@@ -61,5 +62,6 @@ def test_gene_level_figures_are_written(tmp_path, monkeypatch):
 
     pngs = sorted(p.name for p in figures_dir.glob("*.png"))
     assert pngs
+    assert any("gene_forest" in name for name in pngs)
     for name in pngs:
         assert (figures_dir / name).stat().st_size > 0
