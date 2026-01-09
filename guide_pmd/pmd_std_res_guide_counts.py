@@ -228,12 +228,12 @@ def pmd_std_res_and_stats(input_file,
                             n_boot = 100, 
                             seed = 123456, 
                             file_sep="tsv",
-                            gene_level: bool = False,
+                            gene_level: bool = True,
                             focal_vars: list[str] | None = None,
                             gene_id_col: int = 1,
                             gene_methods: list[str] | None = None,
                             gene_out_dir: str | None = None,
-                            gene_figures: bool = False,
+                            gene_figures: bool = True,
                             gene_figures_dir: str | None = None,
                             gene_forest_genes: list[str] | None = None,
                             gene_progress: bool = False):
@@ -312,16 +312,20 @@ def pmd_std_res_and_stats(input_file,
             comb_stats.to_csv(output_stats_file, sep="\t")
 
         if gene_level:
-            if focal_vars is None or len(focal_vars) == 0:
-                raise ValueError("gene_level requires focal_vars (one or more model-matrix column names)")
             if gene_methods is None:
-                gene_methods = ["meta"]
-            gene_out_dir = output_dir if gene_out_dir is None else gene_out_dir
+                gene_methods = ["meta", "lmm", "qc"]
+            if gene_out_dir is None:
+                gene_out_dir = os.path.join(output_dir, "gene_level")
             from . import gene_level as gene_level_mod
 
             gene_response = std_res if first_regressed is None else first_regressed
             gene_mm = mm[keep_cols]
             gene_add_intercept = not (len(pre_regress_vars) > 0)
+            if focal_vars is None or len(focal_vars) == 0:
+                focal_vars = [c for c in gene_mm.columns.tolist() if c != "Intercept"]
+            if len(focal_vars) == 0:
+                print("gene-level: skipping (no focal vars; model matrix appears to contain only an intercept)")
+                return std_res, stats_df, resids_df, comb_stats
 
             gene_meta = None
             gene_lmm = None
@@ -373,30 +377,38 @@ def pmd_std_res_and_stats(input_file,
                 from . import gene_level_figures as gene_level_figures_mod
 
                 if gene_figures_dir is None:
-                    gene_figures_dir = os.path.join(gene_out_dir, "gene_level_figures")
-                gene_level_figures_mod.write_gene_level_figures(
-                    gene_figures_dir,
-                    prefix="PMD_std_res",
-                    gene_meta=gene_meta,
-                    gene_lmm=gene_lmm,
-                    gene_qc=gene_qc,
-                )
-                if gene_forest_genes is not None and len(gene_forest_genes) > 0:
-                    per_guide = gene_level_mod.fit_per_guide_ols(
-                        gene_response,
-                        gene_mm,
-                        focal_vars=focal_vars,
-                        add_intercept=gene_add_intercept,
-                    )
-                    gene_ids = gene_level_mod._get_gene_ids(annotation_table, gene_id_col)
-                    per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
-                    gene_level_figures_mod.write_gene_forest_plots(
-                        per_guide,
+                    gene_figures_dir = os.path.join(output_dir, "figures", "gene_level")
+                figures_ok = True
+                try:
+                    gene_level_figures_mod.write_gene_level_figures(
                         gene_figures_dir,
                         prefix="PMD_std_res",
-                        forest_genes=[str(g) for g in gene_forest_genes],
-                        focal_vars=[str(v) for v in focal_vars],
+                        gene_meta=gene_meta,
+                        gene_lmm=gene_lmm,
+                        gene_qc=gene_qc,
                     )
+                except ImportError as exc:
+                    figures_ok = False
+                    print(f"gene-level figures: skipped ({exc})")
+                if gene_forest_genes is not None and len(gene_forest_genes) > 0:
+                    if not figures_ok:
+                        print("gene-level forest plots: skipped (matplotlib not available)")
+                    else:
+                        per_guide = gene_level_mod.fit_per_guide_ols(
+                            gene_response,
+                            gene_mm,
+                            focal_vars=focal_vars,
+                            add_intercept=gene_add_intercept,
+                        )
+                        gene_ids = gene_level_mod._get_gene_ids(annotation_table, gene_id_col)
+                        per_guide = per_guide.merge(gene_ids, left_on="guide_id", right_index=True, how="left")
+                        gene_level_figures_mod.write_gene_forest_plots(
+                            per_guide,
+                            gene_figures_dir,
+                            prefix="PMD_std_res",
+                            forest_genes=[str(g) for g in gene_forest_genes],
+                            focal_vars=[str(v) for v in focal_vars],
+                        )
 
             if gene_progress:
                 msg_parts = []
@@ -418,7 +430,7 @@ def pmd_std_res_and_stats(input_file,
                         wald_ok_counts = gene_lmm["wald_ok"].value_counts(dropna=False).to_dict()
                         print("gene-level lmm wald_ok:", wald_ok_counts)
     elif gene_level:
-        raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
+        print("gene-level: skipping (requires model_matrix_file)")
     return std_res, stats_df, resids_df, comb_stats
 
 
@@ -435,14 +447,20 @@ def main():
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
     parser.add_argument("-file_type", type = str, help= "tsv or csv, defulat is tsv", default = "tsv")
-    parser.add_argument("--gene-level", dest="gene_level", action="store_true", help="Enable gene-level outputs (opt-in).")
+    parser.add_argument(
+        "--gene-level",
+        dest="gene_level",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable gene-level outputs (default: enabled when a model matrix is provided).",
+    )
     parser.add_argument(
         "--focal-vars",
         dest="focal_vars",
         type=str,
         nargs="+",
         default=None,
-        help="Model-matrix column name(s) to compute gene-level effects for (required when --gene-level).",
+        help="Model-matrix column name(s) to compute gene-level effects for (default: all non-Intercept columns).",
     )
     parser.add_argument(
         "--gene-id-col",
@@ -456,28 +474,29 @@ def main():
         dest="gene_methods",
         type=str,
         nargs="+",
-        default=None,
-        help="Gene-level methods to run: meta (default when enabled), lmm, qc.",
+        default=["meta", "lmm", "qc"],
+        help="Gene-level methods to run (default: meta lmm qc).",
     )
     parser.add_argument(
         "--gene-out-dir",
         dest="gene_out_dir",
         type=str,
         default=None,
-        help="Optional output directory for gene-level files (default: same as -out_dir).",
+        help="Optional output directory for gene-level files (default: <out_dir>/gene_level).",
     )
     parser.add_argument(
         "--gene-figures",
         dest="gene_figures",
-        action="store_true",
-        help="Generate gene-level figures (requires matplotlib).",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate gene-level figures (default: enabled; requires matplotlib).",
     )
     parser.add_argument(
         "--gene-figures-dir",
         dest="gene_figures_dir",
         type=str,
         default=None,
-        help="Optional output directory for gene-level figures (default: <gene_out_dir>/gene_level_figures).",
+        help="Optional output directory for gene-level figures (default: <out_dir>/figures/gene_level).",
     )
     parser.add_argument(
         "--gene-forest-genes",

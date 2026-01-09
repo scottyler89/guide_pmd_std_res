@@ -9,11 +9,11 @@ This roadmap tracks repo hygiene + modernization work for `guide_pmd_std_res`.
 - Make the CLI and Python API more robust (better input validation, fewer footguns).
 - Add tests and CI so changes are safe to ship.
 - Modernize packaging so installs/docs are reproducible.
-- Add a strictly additive “stats add-on” layer (gene-level aggregation + diagnostics) **without changing any existing outputs or statistics**.
+- Add a strictly additive gene-level layer (aggregation + diagnostics) **without changing any existing outputs or statistics**.
 
 ## Back-Compat Contract (non-negotiable)
 - Baseline outputs (existing `PMD_std_res*.tsv` files) remain **byte-for-byte identical** for the same inputs.
-- New analyses must be **opt-in** and write to **new filenames** (no extra columns added to existing outputs).
+- New analyses write to **new filenames** (no extra columns added to existing outputs).
 - Add golden/fixture tests to enforce the above.
 
 ## Work Plan
@@ -58,10 +58,10 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 - [x] Define the “baseline outputs set” (which files must remain byte-identical; starting at `v0.1.5`).
   - [x] Fixture `tests/fixtures/baseline_small`: `PMD_std_res.tsv`, `PMD_std_res_stats.tsv`, `PMD_std_res_stats_resids.tsv`
 - [x] Add fixture input(s) + committed golden baseline outputs; CI fails if any baseline file differs byte-for-byte.
-- [x] Ensure gene-level outputs are **strictly opt-in** (default execution path must not import/execute gene-level code).
+- [x] Ensure gene-level outputs are **strictly additive** (baseline TSV schemas never change; new outputs have new filenames).
 - [x] Ensure gene-level outputs write **only new files** (never modifies baseline TSV schemas; no extra columns).
-- [x] Add a “baseline-only” test to guarantee gene-level flags default to disabled.
-- [x] Add a “gene-level-enabled” test to guarantee baseline outputs are still byte-identical + only new files are created.
+- [ ] Add a “baseline + gene-level default” test: baseline outputs are still byte-identical + gene-level artifacts appear in stable locations.
+- [ ] Add an opt-out test to guarantee gene-level can be disabled and baseline outputs are still byte-identical.
 
 #### P3.1 — Definitions (Estimand, Contrast, and Inputs)
 - [x] Explicitly define gene-level estimand(s) and map to model terms (Decision A in the plan doc).
@@ -69,8 +69,8 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
   - [x] CLI: `--focal-vars` (one or more model-matrix columns)
   - [x] API: `focal_vars=[...]`
 - [x] Decide whether to support:
-  - [ ] all covariates (gene-level outputs for every model term), or
-  - [x] focal-only (recommended for now).
+  - [x] all covariates (gene-level outputs for every model term), and/or
+  - [x] focal-only (users can restrict via `--focal-vars`).
 - [x] Define “gene id” source:
   - [x] default: second column in the input file (typical gene target),
   - [x] configurable: `--gene-id-col` (0-based in original file; 0 is ID/index).
@@ -146,14 +146,14 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Per-gene forest plot (per-guide slopes + SE) for explicit genes (no implicit top-N heuristic).
 - [x] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
 
-#### P3.7 — CLI + API (opt-in; no baseline changes)
-- [x] Add CLI flags (additive):
-  - [x] `--gene-level` (enable)
+#### P3.7 — CLI + API (additive; no baseline changes)
+- [x] Add CLI flags (additive; supports opt-out):
+  - [x] `--gene-level` / `--no-gene-level`
   - [x] `--focal-vars ...`
   - [x] `--gene-id-col ...`
   - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`, `qc`)
   - [x] `--gene-out-dir ...`
-  - [x] `--gene-figures`, `--gene-figures-dir`, and `--gene-forest-genes`
+  - [x] `--gene-figures` / `--no-gene-figures`, `--gene-figures-dir`, and `--gene-forest-genes`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
 - [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
 

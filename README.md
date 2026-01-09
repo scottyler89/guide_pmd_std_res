@@ -34,13 +34,13 @@ This script can be easily installed with pip:
 | `-n_boot`                | `int`   | Number of bootstrap shuffled nulls to run (must be >= 2).                                                                                            | `100`        |
 | `-seed`                  | `int`   | Random seed for reproducibility.                                                                                                                     | `123456`     |
 | `-file_type`             | `str`   | File type of the input data (`tsv` or `csv`).                                                                                                        | `tsv`        |
-| `--gene-level`           | flag    | Enable **gene-level aggregation outputs** (opt-in; baseline outputs remain unchanged).                                                               | `False`      |
-| `--focal-vars`           | `list`  | One or more model-matrix column names to compute gene-level effects for (**required** when `--gene-level`).                                          | `None`       |
+| `--gene-level` / `--no-gene-level` | flag | Enable/disable **gene-level aggregation outputs** (baseline outputs remain unchanged).                                                     | `True`       |
+| `--focal-vars`           | `list`  | Model-matrix column name(s) to compute gene-level effects for (default: all non-Intercept columns).                                              | `None`       |
 | `--gene-id-col`          | `int`   | 0-based column index in the original input file for the gene id (0 is the guide id/index).                                                          | `1`          |
-| `--gene-methods`         | `list`  | Gene-level methods to run (currently supports: `meta`, `lmm`, `qc`).                                                                                  | `["meta"]`   |
-| `--gene-out-dir`         | `str`   | Optional output directory for gene-level files (default: same as `-out_dir`).                                                                        | `None`       |
-| `--gene-figures`         | flag    | Generate gene-level figures (requires `matplotlib`).                                                                                                 | `False`      |
-| `--gene-figures-dir`     | `str`   | Optional output directory for gene-level figures (default: `<gene_out_dir>/gene_level_figures`).                                                     | `None`       |
+| `--gene-methods`         | `list`  | Gene-level methods to run (currently supports: `meta`, `lmm`, `qc`).                                                                                | `["meta","lmm","qc"]` |
+| `--gene-out-dir`         | `str`   | Optional output directory for gene-level tables (default: `<out_dir>/gene_level`).                                                                  | `None`       |
+| `--gene-figures` / `--no-gene-figures` | flag | Enable/disable gene-level figures (requires `matplotlib`).                                                                 | `True`       |
+| `--gene-figures-dir`     | `str`   | Optional output directory for gene-level figures (default: `<out_dir>/figures/gene_level`).                                                         | `None`       |
 | `--gene-forest-genes`    | `list`  | Optional gene id(s) to generate per-guide forest plots for (requires `--gene-figures`).                                                             | `None`       |
 | `--gene-progress`        | flag    | Print a short summary of gene-level execution (counts + fallbacks).                                                                                 | `False`      |
 
@@ -59,10 +59,7 @@ python -m guide_pmd.pmd_std_res_guide_counts \
     -n_boot 100 \
     -seed 123456 \
     -file_type tsv \
-    --gene-level \
     --focal-vars treatment \
-    --gene-methods lmm meta qc \
-    --gene-figures \
     --gene-forest-genes A
 ```
 
@@ -79,9 +76,9 @@ The script produces the following results:
 
 All outputs are saved in the specified output directory.
 
-When gene-level outputs are enabled, additional files are created with new filenames (e.g., `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`) and **no existing baseline files are modified**.
+When gene-level outputs are enabled (default when a model matrix is provided), additional files are created with new filenames (e.g., `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`) and **no existing baseline files are modified**. By default, these are written under `gene_level/` in the output directory.
 
-When `--gene-figures` is enabled, figures are written to `gene_level_figures/` under the gene output directory.
+When gene-level figures are enabled (default), figures are written under `figures/gene_level/` in the output directory.
 
 ---
 

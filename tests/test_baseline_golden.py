@@ -44,6 +44,12 @@ def test_baseline_outputs_match_golden(tmp_path, monkeypatch):
         "PMD_std_res_stats.tsv",
         "PMD_std_res_stats_resids.tsv",
     ]
-    assert sorted(p.name for p in out_dir.iterdir()) == sorted(expected_files)
     for name in expected_files:
         assert _sha256(out_dir / name) == _sha256(expected_dir / name)
+
+    # Gene-level outputs are additive and must not change the baseline TSV bytes.
+    gene_level_dir = out_dir / "gene_level"
+    assert gene_level_dir.is_dir()
+    assert (gene_level_dir / "PMD_std_res_gene_meta.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_qc.tsv").is_file()

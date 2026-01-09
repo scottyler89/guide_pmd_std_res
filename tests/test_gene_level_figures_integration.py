@@ -55,7 +55,7 @@ def test_gene_level_figures_are_written(tmp_path, monkeypatch):
         gene_forest_genes=["A"],
     )
 
-    figures_dir = out_dir / "gene_level_figures"
+    figures_dir = out_dir / "figures" / "gene_level"
     assert figures_dir.is_dir()
 
     pngs = sorted(p.name for p in figures_dir.glob("*.png"))

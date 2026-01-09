@@ -111,6 +111,7 @@ def test_gene_level_qc_wiring_does_not_change_baseline_outputs(tmp_path, monkeyp
         assert (out_gene / name).is_file()
         assert _sha256(out_baseline / name) == _sha256(out_gene / name)
 
-    assert not (out_gene / "PMD_std_res_gene_meta.tsv").exists()
-    assert not (out_gene / "PMD_std_res_gene_lmm.tsv").exists()
-    assert (out_gene / "PMD_std_res_gene_qc.tsv").is_file()
+    gene_level_dir = out_gene / "gene_level"
+    assert not (gene_level_dir / "PMD_std_res_gene_meta.tsv").exists()
+    assert not (gene_level_dir / "PMD_std_res_gene_lmm.tsv").exists()
+    assert (gene_level_dir / "PMD_std_res_gene_qc.tsv").is_file()

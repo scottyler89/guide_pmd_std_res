@@ -17,7 +17,7 @@ def _sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypatch):
+def test_gene_level_defaults_and_opt_out_preserves_baseline(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "pmd", FakePMD)
 
     input_path = tmp_path / "counts.tsv"
@@ -41,12 +41,12 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
     )
     mm.to_csv(model_matrix_path, sep="\t")
 
-    out_baseline = tmp_path / "out_baseline"
-    out_gene = tmp_path / "out_gene"
+    out_default = tmp_path / "out_default"
+    out_optout = tmp_path / "out_optout"
 
     mod.pmd_std_res_and_stats(
         str(input_path),
-        str(out_baseline),
+        str(out_default),
         model_matrix_file=str(model_matrix_path),
         p_combine_idx=None,
         in_annotation_cols=2,
@@ -58,7 +58,7 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
 
     mod.pmd_std_res_and_stats(
         str(input_path),
-        str(out_gene),
+        str(out_optout),
         model_matrix_file=str(model_matrix_path),
         p_combine_idx=None,
         in_annotation_cols=2,
@@ -66,10 +66,8 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
         n_boot=2,
         seed=1,
         file_sep="tsv",
-        gene_level=True,
-        focal_vars=["treatment"],
-        gene_methods=["meta"],
-        gene_id_col=1,
+        gene_level=False,
+        gene_figures=False,
     )
 
     baseline_files = [
@@ -78,12 +76,11 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
         "PMD_std_res_stats_resids.tsv",
     ]
     for name in baseline_files:
-        assert (out_baseline / name).is_file()
-        assert (out_gene / name).is_file()
-        assert _sha256(out_baseline / name) == _sha256(out_gene / name)
+        assert (out_default / name).is_file()
+        assert (out_optout / name).is_file()
+        assert _sha256(out_default / name) == _sha256(out_optout / name)
 
-    assert not (out_baseline / "PMD_std_res_gene_meta.tsv").exists()
-    assert (out_gene / "PMD_std_res_gene_meta.tsv").is_file()
-
-    assert sorted(p.name for p in out_baseline.iterdir()) == sorted(baseline_files)
-    assert sorted(p.name for p in out_gene.iterdir()) == sorted(baseline_files + ["PMD_std_res_gene_meta.tsv"])
+    assert (out_default / "gene_level" / "PMD_std_res_gene_meta.tsv").is_file()
+    assert (out_default / "gene_level" / "PMD_std_res_gene_lmm.tsv").is_file()
+    assert (out_default / "gene_level" / "PMD_std_res_gene_qc.tsv").is_file()
+    assert not (out_optout / "gene_level").exists()

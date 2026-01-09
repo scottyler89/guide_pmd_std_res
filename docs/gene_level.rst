@@ -1,12 +1,12 @@
 Gene-Level Aggregation
 ======================
 
-This repo includes **optional** gene-level outputs that complement the existing guide-level analysis.
+This repo can generate gene-level outputs that complement the existing guide-level analysis.
 
 **Back-compat contract**
 
 - Baseline outputs (existing ``PMD_std_res*.tsv`` files) remain **byte-for-byte identical** for the same inputs.
-- Gene-level outputs are **opt-in** and write to **new filenames** only.
+- Gene-level outputs write to **new filenames** only (they do not modify baseline TSV schemas).
 
 Inputs
 ------
@@ -17,11 +17,20 @@ Gene-level methods use:
 - the guide annotation table (must include a gene identifier column)
 - the model matrix (samples × covariates)
 
-The focal covariate(s) are specified explicitly via ``--focal-vars`` (or ``focal_vars=[...]`` in the API).
+The focal covariate(s) can be specified explicitly via ``--focal-vars`` (or ``focal_vars=[...]`` in the API).
+If omitted, focal vars default to **all** model-matrix columns except ``Intercept``.
 The gene identifier is taken from the input annotation table column specified by ``--gene-id-col`` (default: 1,
 the first non-index column in the input file).
 
 Outputs are written with a deterministic sort order (``focal_var`` then ``gene_id``).
+
+Output locations
+----------------
+
+By default:
+
+- Gene-level TSVs are written under ``<out_dir>/gene_level/``.
+- Gene-level figures are written under ``<out_dir>/figures/gene_level/``.
 
 Estimands
 ---------
@@ -103,10 +112,7 @@ Example (meta + mixed model + QC + figures):
      -i counts.tsv \
      -o out/ \
      -mm model_matrix.tsv \
-     --gene-level \
      --focal-vars treatment \
-     --gene-methods meta lmm qc \
-     --gene-figures \
      --gene-forest-genes A \
      --gene-progress
 
