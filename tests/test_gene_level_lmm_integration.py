@@ -85,7 +85,7 @@ def test_gene_level_lmm_wiring_does_not_change_baseline_outputs(tmp_path, monkey
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
     )
@@ -97,7 +97,7 @@ def test_gene_level_lmm_wiring_does_not_change_baseline_outputs(tmp_path, monkey
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
         gene_level=True,
@@ -118,4 +118,3 @@ def test_gene_level_lmm_wiring_does_not_change_baseline_outputs(tmp_path, monkey
 
     assert not (out_gene / "PMD_std_res_gene_meta.tsv").exists()
     assert (out_gene / "PMD_std_res_gene_lmm.tsv").is_file()
-

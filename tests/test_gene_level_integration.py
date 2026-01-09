@@ -51,7 +51,7 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
     )
@@ -63,7 +63,7 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
         gene_level=True,

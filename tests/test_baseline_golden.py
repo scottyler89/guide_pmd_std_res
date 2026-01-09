@@ -34,7 +34,7 @@ def test_baseline_outputs_match_golden(tmp_path, monkeypatch):
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
     )
@@ -47,4 +47,3 @@ def test_baseline_outputs_match_golden(tmp_path, monkeypatch):
     assert sorted(p.name for p in out_dir.iterdir()) == sorted(expected_files)
     for name in expected_files:
         assert _sha256(out_dir / name) == _sha256(expected_dir / name)
-

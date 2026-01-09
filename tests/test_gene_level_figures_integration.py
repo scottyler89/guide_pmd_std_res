@@ -47,7 +47,7 @@ def test_gene_level_figures_are_written(tmp_path, monkeypatch):
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
         gene_level=True,
@@ -63,4 +63,3 @@ def test_gene_level_figures_are_written(tmp_path, monkeypatch):
     assert pngs
     for name in pngs:
         assert (figures_dir / name).stat().st_size > 0
-

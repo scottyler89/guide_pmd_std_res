@@ -112,6 +112,11 @@ def get_pmd_std_res(input_file, in_annotation_cols, n_boot = 100, seed = 123456,
     # Reading data from input TSV file
     np.random.seed(seed)
     in_annotation_cols = int(in_annotation_cols)
+    n_boot = int(n_boot)
+    if n_boot < 2:
+        raise ValueError(
+            "n_boot must be >= 2; n_boot=1 produces a degenerate null standard deviation and invalid z-scores"
+        )
     if in_annotation_cols < 1:
         raise ValueError("in_annotation_cols must be >= 1")
     guides = pd.read_csv(input_file, sep=sep, index_col=0)

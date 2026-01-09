@@ -28,7 +28,7 @@ def test_get_pmd_std_res_honors_sep(tmp_path, monkeypatch):
     )
     df.to_csv(input_path, sep=",")
 
-    std_res, ann = mod.get_pmd_std_res(str(input_path), in_annotation_cols=2, n_boot=1, seed=1, sep=",")
+    std_res, ann = mod.get_pmd_std_res(str(input_path), in_annotation_cols=2, n_boot=2, seed=1, sep=",")
 
     assert list(ann.columns) == ["gene"]
     assert list(std_res.columns) == ["s1", "s2"]
@@ -57,7 +57,7 @@ def test_pmd_std_res_and_stats_returns_nones_without_model_matrix(tmp_path, monk
         p_combine_idx=None,
         in_annotation_cols=2,
         pre_regress_vars=None,
-        n_boot=1,
+        n_boot=2,
         seed=1,
         file_sep="tsv",
     )
@@ -79,6 +79,22 @@ def test_pmd_std_res_and_stats_rejects_invalid_file_sep(tmp_path):
         )
 
 
+def test_get_pmd_std_res_rejects_n_boot_lt_2(tmp_path):
+    input_path = tmp_path / "counts.tsv"
+    df = pd.DataFrame(
+        {
+            "gene": ["A"],
+            "s1": [10],
+            "s2": [12],
+        },
+        index=["g1"],
+    )
+    df.to_csv(input_path, sep="\t")
+
+    with pytest.raises(ValueError, match="n_boot must be >= 2"):
+        mod.get_pmd_std_res(str(input_path), in_annotation_cols=2, n_boot=1, seed=1, sep="\t")
+
+
 def test_run_glm_analysis_all_zero_variance_is_safe():
     normalized_matrix = pd.DataFrame(
         {"s1": [1.0, 1.0], "s2": [1.0, 1.0], "s3": [1.0, 1.0]},
@@ -93,4 +109,3 @@ def test_run_glm_analysis_all_zero_variance_is_safe():
     assert list(resids.columns) == ["s1", "s2", "s3"]
     assert stats.isna().all().all()
     assert resids.isna().all().all()
-
