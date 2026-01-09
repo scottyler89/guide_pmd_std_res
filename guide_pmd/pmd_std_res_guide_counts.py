@@ -1,4 +1,5 @@
 import os
+import shutil
 import gc
 import argparse
 import numpy as np
@@ -228,6 +229,7 @@ def pmd_std_res_and_stats(input_file,
                             n_boot = 100, 
                             seed = 123456, 
                             file_sep="tsv",
+                            std_res_file: str | None = None,
                             gene_level: bool = True,
                             focal_vars: list[str] | None = None,
                             gene_id_col: int = 1,
@@ -264,8 +266,33 @@ def pmd_std_res_and_stats(input_file,
         if not os.path.isfile(model_matrix_file):
             raise FileNotFoundError(model_matrix_file)
     # Run the PMD standardized residuals & save file
-    std_res, annotation_table = get_pmd_std_res(input_file, in_annotation_cols = in_annotation_cols, n_boot = n_boot, seed = seed, sep=sep)
-    std_res.to_csv(output_file, sep="\t")
+    if std_res_file is not None:
+        if not os.path.isfile(std_res_file):
+            raise FileNotFoundError(std_res_file)
+        guides = pd.read_csv(input_file, sep=sep, index_col=0)
+        std_res = pd.read_csv(std_res_file, sep="\t" if std_res_file.endswith(".tsv") else sep, index_col=0)
+        std_res = std_res.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        in_annotation_cols = int(in_annotation_cols)
+        if in_annotation_cols < 1:
+            raise ValueError("in_annotation_cols must be >= 1")
+        annotation_table = guides.iloc[:, : (in_annotation_cols - 1)]
+        if annotation_table.index.has_duplicates:
+            raise ValueError("annotation_table index must not contain duplicates (guide_id)")
+        if std_res.index.has_duplicates:
+            raise ValueError("std_res index must not contain duplicates (guide_id)")
+        if not annotation_table.index.isin(std_res.index).all():
+            raise ValueError("std_res is missing one or more guide ids present in the input file")
+        # Preserve the original bytes of the precomputed PMD output on disk.
+        shutil.copyfile(std_res_file, output_file)
+    else:
+        std_res, annotation_table = get_pmd_std_res(
+            input_file,
+            in_annotation_cols=in_annotation_cols,
+            n_boot=n_boot,
+            seed=seed,
+            sep=sep,
+        )
+        std_res.to_csv(output_file, sep="\t")
     stats_df = None
     resids_df = None
     comb_stats = None
@@ -448,6 +475,13 @@ def main():
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
     parser.add_argument("-file_type", type = str, help= "tsv or csv, defulat is tsv", default = "tsv")
     parser.add_argument(
+        "--std-res-file",
+        dest="std_res_file",
+        type=str,
+        default=None,
+        help="Optional precomputed PMD_std_res.tsv (skips PMD bootstrap computation).",
+    )
+    parser.add_argument(
         "--gene-level",
         dest="gene_level",
         action=argparse.BooleanOptionalAction,
@@ -524,6 +558,7 @@ def main():
                           n_boot = args.n_boot, 
                           seed = args.seed,
                           file_sep=args.file_type,
+                          std_res_file=args.std_res_file,
                           gene_level=args.gene_level,
                           focal_vars=args.focal_vars,
                           gene_id_col=args.gene_id_col,

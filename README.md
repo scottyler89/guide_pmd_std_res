@@ -34,6 +34,7 @@ This script can be easily installed with pip:
 | `-n_boot`                | `int`   | Number of bootstrap shuffled nulls to run (must be >= 2).                                                                                            | `100`        |
 | `-seed`                  | `int`   | Random seed for reproducibility.                                                                                                                     | `123456`     |
 | `-file_type`             | `str`   | File type of the input data (`tsv` or `csv`).                                                                                                        | `tsv`        |
+| `--std-res-file`         | `str`   | Optional precomputed `PMD_std_res.tsv` to skip the PMD bootstrap step.                                                                               | `None`       |
 | `--gene-level` / `--no-gene-level` | flag | Enable/disable **gene-level aggregation outputs** (baseline outputs remain unchanged).                                                     | `True`       |
 | `--focal-vars`           | `list`  | Model-matrix column name(s) to compute gene-level effects for (default: all non-Intercept columns).                                              | `None`       |
 | `--gene-id-col`          | `int`   | 0-based column index in the original input file for the gene id (0 is the guide id/index).                                                          | `1`          |
