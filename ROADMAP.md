@@ -143,7 +143,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
 - [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
 - [x] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
-- [ ] Per-gene forest plot (per-guide slopes + SE) for flagged/top genes.
+- [x] Per-gene forest plot (per-guide slopes + SE) for explicit genes (no implicit top-N heuristic).
 - [x] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
 
 #### P3.7 — CLI + API (opt-in; no baseline changes)
@@ -153,7 +153,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-id-col ...`
   - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`, `qc`)
   - [x] `--gene-out-dir ...`
-  - [x] `--gene-figures` and `--gene-figures-dir`
+  - [x] `--gene-figures`, `--gene-figures-dir`, and `--gene-forest-genes`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
 - [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
 
