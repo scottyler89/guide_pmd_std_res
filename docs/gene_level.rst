@@ -18,6 +18,20 @@ Gene-level methods use:
 - the model matrix (samples × covariates)
 
 The focal covariate(s) are specified explicitly via ``--focal-vars`` (or ``focal_vars=[...]`` in the API).
+The gene identifier is taken from the input annotation table column specified by ``--gene-id-col`` (default: 1,
+the first non-index column in the input file).
+
+Outputs are written with a deterministic sort order (``focal_var`` then ``gene_id``).
+
+Estimands
+---------
+
+For a given gene ``g`` and focal covariate ``T``:
+
+- Plan A (``lmm``): ``theta`` is the fixed-effect coefficient for ``T`` in a per-gene mixed model with guide
+  random intercepts (and random slopes for ``T`` when supported).
+- Plan B (``meta``): ``theta`` is the random-effects meta-analysis mean of per-guide OLS slopes.
+- Plan C (``qc``): robust location summaries of per-guide slopes (no primary p-values).
 
 Methods
 -------
@@ -59,6 +73,12 @@ Produces per-gene summary diagnostics and robust effect summaries derived from p
 This layer **does not** apply hard thresholds or make binary calls (policy belongs in consumer/report layers).
 
 Output: ``PMD_std_res_gene_qc.tsv``
+
+Columns include robust summaries:
+
+- ``beta_median``, ``beta_trimmed_mean``, ``beta_winsor_mean``
+- ``beta_huber`` (Huber M-estimator; ``huber_c`` recorded; failures fall back to the median and are labeled by
+  ``beta_huber_source``)
 
 Figures
 -------

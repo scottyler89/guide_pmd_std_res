@@ -52,3 +52,37 @@ def test_compute_gene_qc_metrics(monkeypatch):
     assert row_a["max_abs_beta"] == 2.0
     assert row_a["max_abs_z"] == 2.0
     assert row_a["max_abs_resid"] == 5.0
+
+
+def test_compute_gene_qc_huber_location_robust_to_outlier(monkeypatch):
+    response = pd.DataFrame(
+        {"s1": [0.0, 0.0, 0.0], "s2": [0.0, 0.0, 0.0]},
+        index=["g1", "g2", "g3"],
+    )
+    annotation_table = pd.DataFrame({"gene": ["A", "A", "A"]}, index=["g1", "g2", "g3"])
+    model_matrix = pd.DataFrame({"treatment": [0.0, 1.0]}, index=["s1", "s2"])
+
+    def fake_fit_per_guide_ols(*_args, **_kwargs):
+        return pd.DataFrame(
+            [
+                {"guide_id": "g1", "focal_var": "treatment", "beta": 100.0, "se": 1.0, "t": 100.0, "p": 0.0},
+                {"guide_id": "g2", "focal_var": "treatment", "beta": 1.0, "se": 1.0, "t": 1.0, "p": 0.3},
+                {"guide_id": "g3", "focal_var": "treatment", "beta": 1.0, "se": 1.0, "t": 1.0, "p": 0.3},
+            ]
+        )
+
+    monkeypatch.setattr(qc, "fit_per_guide_ols", fake_fit_per_guide_ols)
+
+    out = qc.compute_gene_qc(
+        response,
+        annotation_table,
+        model_matrix,
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        add_intercept=True,
+    )
+
+    row = out.iloc[0]
+    assert row["beta_median"] == 1.0
+    assert row["beta_huber_source"] in {"huber", "median_fallback"}
+    assert np.isclose(row["beta_huber"], 1.0)

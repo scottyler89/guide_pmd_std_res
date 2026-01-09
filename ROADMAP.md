@@ -64,25 +64,25 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 - [x] Add a “gene-level-enabled” test to guarantee baseline outputs are still byte-identical + only new files are created.
 
 #### P3.1 — Definitions (Estimand, Contrast, and Inputs)
-- [ ] Explicitly define gene-level estimand(s) and map to model terms (Decision A in the plan doc).
-- [ ] Define how users specify focal contrasts:
-  - [ ] CLI: `--focal-vars` (one or more model-matrix columns)
-  - [ ] API: `focal_vars=[...]`
-- [ ] Decide whether to support:
+- [x] Explicitly define gene-level estimand(s) and map to model terms (Decision A in the plan doc).
+- [x] Define how users specify focal contrasts:
+  - [x] CLI: `--focal-vars` (one or more model-matrix columns)
+  - [x] API: `focal_vars=[...]`
+- [x] Decide whether to support:
   - [ ] all covariates (gene-level outputs for every model term), or
-  - [ ] focal-only (recommended for now).
-- [ ] Define “gene id” source:
-  - [ ] default: second column in the input file (typical gene target),
-  - [ ] configurable: `--gene-id-col` (0-based in original file; 0 is ID/index).
-- [ ] Define a canonical long-table layout for modeling: `gene_id, guide_id, sample_id, y, (X...)`.
-- [ ] Validate invariants: sample ordering, missing samples in model matrix, missing annotation fields, duplicates.
+  - [x] focal-only (recommended for now).
+- [x] Define “gene id” source:
+  - [x] default: second column in the input file (typical gene target),
+  - [x] configurable: `--gene-id-col` (0-based in original file; 0 is ID/index).
+- [x] Define a canonical long-table layout for modeling: `gene_id, guide_id, sample_id, y, (X...)`.
+- [x] Validate invariants: sample ordering, missing samples in model matrix, missing annotation fields, duplicates.
 
 #### P3.2 — Data Plumbing (from current pipeline to add-on inputs)
-- [ ] Implement conversion from wide standardized residuals (`std_res`) to long-form (gene/guide/sample rows).
-- [ ] Add validation utilities:
-  - [ ] check that model-matrix rows match `std_res` columns (and align/reindex deterministically)
-  - [ ] check that `gene_id` exists for every guide row
-- [ ] Implement a stable deterministic ordering for outputs (gene sort, then guide sort).
+- [x] Implement conversion from wide standardized residuals (`std_res`) to long-form (gene/guide/sample rows).
+- [x] Add validation utilities:
+  - [x] check that model-matrix rows match `std_res` columns (and align/reindex deterministically)
+  - [x] check that `gene_id` exists for every guide row
+- [x] Implement a stable deterministic ordering for outputs (gene sort, then guide sort).
 
 #### P3.3 — Plan B (Fast + cross-check): Summary-level random-effects meta-analysis
 Goal: low-overhead gene-level inference using guide-level fits; also used as a validation layer for Plan A (Decision B option 2).
@@ -130,7 +130,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Provide robust effect summaries (QC; not primary p-values):
   - [x] median of per-guide slopes
   - [x] trimmed mean / winsorized mean
-  - [ ] Huber M-estimator (optional)
+  - [x] Huber M-estimator (optional)
 - [ ] Define “flagged gene” criteria from rubric (thresholds + rationale + configurability).
 - [ ] Optional targeted models for flagged genes:
   - [ ] heavy-tailed residual sensitivity (if feasible in chosen tooling)

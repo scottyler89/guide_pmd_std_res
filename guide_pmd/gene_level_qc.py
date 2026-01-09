@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
+from statsmodels.robust.scale import Huber
 
 from .gene_level import _align_model_matrix
 from .gene_level import _get_gene_ids
@@ -45,6 +46,28 @@ def _winsorized_mean(values: np.ndarray, *, prop: float) -> float:
     return float(np.mean(clipped))
 
 
+def _huber_location(
+    values: np.ndarray,
+    *,
+    c: float,
+    tol: float = 1e-8,
+    max_iter: int = 30,
+) -> tuple[float, str]:
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return np.nan, ""
+    if values.size == 1:
+        return float(values[0]), "single"
+
+    try:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mu, _scale = Huber(c=float(c), tol=float(tol), maxiter=int(max_iter))(values)
+        return float(mu), "huber"
+    except Exception:
+        return float(np.median(values)), "median_fallback"
+
+
 def compute_gene_qc(
     response_matrix: pd.DataFrame,
     annotation_table: pd.DataFrame,
@@ -54,6 +77,7 @@ def compute_gene_qc(
     gene_id_col: int = 1,
     add_intercept: bool = True,
     trim_prop: float = 0.2,
+    huber_c: float = 1.5,
     residual_matrix: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
@@ -117,6 +141,8 @@ def compute_gene_qc(
         max_abs_beta = float(np.max(np.abs(beta_good))) if beta_good.size else np.nan
         max_abs_z = float(np.nanmax(np.abs(z))) if np.isfinite(z).any() else np.nan
 
+        beta_huber, beta_huber_source = _huber_location(beta_good, c=huber_c)
+
         max_abs_resid = np.nan
         if residual_matrix is not None:
             guides = sub["guide_id"].tolist()
@@ -131,12 +157,15 @@ def compute_gene_qc(
                 "m_guides_total": float(m_total),
                 "m_guides_used": float(m_used),
                 "trim_prop": float(trim_prop),
+                "huber_c": float(huber_c),
                 "beta_mean": beta_mean,
                 "beta_median": beta_median,
                 "beta_sd": beta_sd,
                 "beta_mad": beta_mad,
                 "beta_trimmed_mean": _trimmed_mean(beta_good, prop=trim_prop),
                 "beta_winsor_mean": _winsorized_mean(beta_good, prop=trim_prop),
+                "beta_huber": beta_huber,
+                "beta_huber_source": beta_huber_source,
                 "majority_sign": majority_sign,
                 "sign_agreement": sign_agreement,
                 "frac_opposite_sign": frac_opposite,
