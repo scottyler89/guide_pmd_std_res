@@ -161,3 +161,6 @@ cython_debug/
 
 # Local git worktrees (do not commit nested checkouts)
 .worktrees/
+
+# Local scratch/prototype outputs
+.tmp/
