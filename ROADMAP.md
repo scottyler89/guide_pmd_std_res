@@ -56,10 +56,10 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 #### P3.0 — Non-negotiables (Back-Compat + IO)
 - [ ] Define the “baseline outputs set” (which files must remain byte-identical; starting at `v0.1.5`).
 - [ ] Add fixture input(s) + committed golden baseline outputs; CI fails if any baseline file differs byte-for-byte.
-- [ ] Ensure add-on is **strictly opt-in** (default execution path must not import/execute add-on code).
-- [ ] Ensure add-on writes **only new files** (never modifies baseline TSV schemas; no extra columns).
-- [ ] Add a “baseline-only” unit test to guarantee add-on flags default to disabled.
-- [ ] Add an “addon-enabled” test to guarantee baseline outputs are still byte-identical + only new files are created.
+- [x] Ensure gene-level outputs are **strictly opt-in** (default execution path must not import/execute gene-level code).
+- [x] Ensure gene-level outputs write **only new files** (never modifies baseline TSV schemas; no extra columns).
+- [x] Add a “baseline-only” test to guarantee gene-level flags default to disabled.
+- [x] Add a “gene-level-enabled” test to guarantee baseline outputs are still byte-identical + only new files are created.
 
 #### P3.1 — Definitions (Estimand, Contrast, and Inputs)
 - [ ] Explicitly define gene-level estimand(s) and map to model terms (Decision A in the plan doc).
@@ -85,16 +85,16 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 #### P3.3 — Plan B (Fast + cross-check): Summary-level random-effects meta-analysis
 Goal: low-overhead gene-level inference using guide-level fits; also used as a validation layer for Plan A (Decision B option 2).
 
-- [ ] Implement an add-on-only per-guide GLM fitter that returns: `beta`, `SE`, `t`, `p` for each focal var (avoid touching baseline stats tables).
-- [ ] Implement per-gene random-effects meta model:
-  - [ ] `beta_gj ~ N(theta_g, se_gj^2 + tau_g^2)`
-  - [ ] choose tau estimation method (start: DerSimonian–Laird; later: REML/EB).
-- [ ] Report heterogeneity diagnostics (Decision F scaffolding):
-  - [ ] `tau`, Cochran’s Q, I², guide sign-agreement fraction
-- [ ] Multiple testing:
-  - [ ] compute gene-level FDR for each focal var
-- [ ] Output spec (new file; stable schema + sorting):
-  - [ ] `PMD_std_res_gene_meta.tsv`
+- [x] Implement a per-guide OLS (Gaussian) fitter that returns: `beta`, `SE`, `t`, `p` for each focal var (avoid touching baseline stats tables).
+- [x] Implement per-gene random-effects meta model:
+  - [x] `beta_gj ~ N(theta_g, se_gj^2 + tau_g^2)`
+  - [x] choose tau estimation method (start: DerSimonian–Laird; later: REML/EB).
+- [x] Report heterogeneity diagnostics (Decision F scaffolding):
+  - [x] `tau`, Cochran’s Q, I², guide sign-agreement fraction
+- [x] Multiple testing:
+  - [x] compute gene-level FDR for each focal var
+- [x] Output spec (new file; stable schema + sorting):
+  - [x] `PMD_std_res_gene_meta.tsv`
 
 #### P3.4 — Plan A (Primary): Observation-level mixed model per gene (RI / RI+RS) + LRT
 Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B option 1; Decision C RI+RS).
@@ -141,20 +141,20 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [ ] Plan A vs Plan B comparison scatter (effect size and -log10 p).
 - [ ] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
 - [ ] Per-gene forest plot (per-guide slopes + SE) for flagged/top genes.
-- [ ] Output directory + naming convention (e.g., `addon_figures/` with deterministic filenames).
+- [ ] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
 
 #### P3.7 — CLI + API (opt-in; no baseline changes)
-- [ ] Add CLI flags (additive):
-  - [ ] `--gene-addon` (enable)
-  - [ ] `--focal-vars ...`
-  - [ ] `--gene-id-col ...`
-  - [ ] `--methods {lmm,meta,qc,all}`
-  - [ ] `--addon-out-dir ...`
-- [ ] Add Python API entry point(s) that can run add-on using in-memory `std_res` + model matrix.
-- [ ] Ensure baseline pipeline path is unchanged when `--gene-addon` is not set.
+- [x] Add CLI flags (additive):
+  - [x] `--gene-level` (enable)
+  - [x] `--focal-vars ...`
+  - [x] `--gene-id-col ...`
+  - [x] `--gene-methods ...` (currently supports: `meta`)
+  - [x] `--gene-out-dir ...`
+- [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
+- [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
 
 #### P3.8 — Testing + Validation (focus on invariants, calibration, and regressions)
-- [ ] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
+- [x] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
 - [ ] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
 - [ ] Golden tests for baseline outputs (byte-for-byte).
 - [ ] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
