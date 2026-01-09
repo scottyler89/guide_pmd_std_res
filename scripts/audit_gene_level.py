@@ -3,11 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
+import warnings
 from dataclasses import asdict
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from guide_pmd.gene_level import compute_gene_meta
 from guide_pmd.gene_level_lmm import compute_gene_lmm
@@ -151,7 +156,23 @@ def main() -> None:
     parser.add_argument("--slope-sd", type=float, default=0.0, help="Guide slope SD (heterogeneity).")
     parser.add_argument("--seed", type=int, default=123, help="Random seed.")
     parser.add_argument("--alpha", type=float, default=0.05, help="Alpha used for summary power/FPR.")
+    parser.add_argument(
+        "--show-warnings",
+        action="store_true",
+        help="Show statsmodels convergence warnings (default: suppressed).",
+    )
     args = parser.parse_args()
+
+    if not args.show_warnings:
+        try:
+            from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+        except Exception:
+            pass
+        warnings.filterwarnings("ignore", message="Random effects covariance is singular")
+        warnings.filterwarnings("ignore", message="The random effects covariance matrix is singular")
+        warnings.filterwarnings("ignore", message="The Hessian matrix at the estimated parameter values is not positive definite")
 
     cfg = AuditConfig(
         n_genes=args.n_genes,
@@ -176,4 +197,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
