@@ -82,7 +82,8 @@ Example (meta + mixed model + QC + figures):
      --focal-vars treatment \
      --gene-methods meta lmm qc \
      --gene-figures \
-     --gene-forest-genes A
+     --gene-forest-genes A \
+     --gene-progress
 
 Notes
 -----

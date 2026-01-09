@@ -42,6 +42,7 @@ This script can be easily installed with pip:
 | `--gene-figures`         | flag    | Generate gene-level figures (requires `matplotlib`).                                                                                                 | `False`      |
 | `--gene-figures-dir`     | `str`   | Optional output directory for gene-level figures (default: `<gene_out_dir>/gene_level_figures`).                                                     | `None`       |
 | `--gene-forest-genes`    | `list`  | Optional gene id(s) to generate per-guide forest plots for (requires `--gene-figures`).                                                             | `None`       |
+| `--gene-progress`        | flag    | Print a short summary of gene-level execution (counts + fallbacks).                                                                                 | `False`      |
 
 ---
 
