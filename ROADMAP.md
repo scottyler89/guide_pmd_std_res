@@ -168,5 +168,5 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 
 #### P3.10 — Docs + Release
 - [ ] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
-- [ ] Update `README.md` with add-on usage examples.
+- [x] Update `README.md` with gene-level usage examples.
 - [ ] Version + changelog entry + tag once add-on ships.
