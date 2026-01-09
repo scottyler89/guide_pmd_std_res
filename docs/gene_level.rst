@@ -65,6 +65,8 @@ Figures
 
 If enabled, figures are written under ``gene_level_figures/`` with deterministic filenames.
 
+Forest plots are generated only for gene ids explicitly provided via ``--gene-forest-genes``.
+
 CLI usage
 ---------
 
@@ -79,10 +81,10 @@ Example (meta + mixed model + QC + figures):
      --gene-level \
      --focal-vars treatment \
      --gene-methods meta lmm qc \
-     --gene-figures
+     --gene-figures \
+     --gene-forest-genes A
 
 Notes
 -----
 
 - ``-n_boot`` must be ``>= 2`` (smaller values produce degenerate null standard deviations in PMD).
-
