@@ -170,6 +170,6 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [ ] Add caching of per-gene fits (optional; keyed by inputs) to speed iteration.
 
 #### P3.10 — Docs + Release
-- [ ] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
+- [x] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
 - [x] Update `README.md` with gene-level usage examples.
 - [ ] Version + changelog entry + tag once add-on ships.
