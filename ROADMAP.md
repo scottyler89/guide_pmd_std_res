@@ -60,8 +60,8 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 - [x] Add fixture input(s) + committed golden baseline outputs; CI fails if any baseline file differs byte-for-byte.
 - [x] Ensure gene-level outputs are **strictly additive** (baseline TSV schemas never change; new outputs have new filenames).
 - [x] Ensure gene-level outputs write **only new files** (never modifies baseline TSV schemas; no extra columns).
-- [ ] Add a “baseline + gene-level default” test: baseline outputs are still byte-identical + gene-level artifacts appear in stable locations.
-- [ ] Add an opt-out test to guarantee gene-level can be disabled and baseline outputs are still byte-identical.
+- [x] Add a “baseline + gene-level default” test: baseline outputs are still byte-identical + gene-level artifacts appear in stable locations.
+- [x] Add an opt-out test to guarantee gene-level can be disabled and baseline outputs are still byte-identical.
 
 #### P3.1 — Definitions (Estimand, Contrast, and Inputs)
 - [x] Explicitly define gene-level estimand(s) and map to model terms (Decision A in the plan doc).
