@@ -326,6 +326,20 @@ def pmd_std_res_and_stats(input_file,
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
                 gene_meta.to_csv(gene_out_path, sep="\t", index=False)
+            if "lmm" in gene_methods:
+                from . import gene_level_lmm as gene_level_lmm_mod
+
+                gene_lmm = gene_level_lmm_mod.compute_gene_lmm(
+                    gene_response,
+                    annotation_table,
+                    gene_mm,
+                    focal_vars=focal_vars,
+                    gene_id_col=gene_id_col,
+                    add_intercept=gene_add_intercept,
+                )
+                os.makedirs(gene_out_dir, exist_ok=True)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
+                gene_lmm.to_csv(gene_out_path, sep="\t", index=False)
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
@@ -366,7 +380,7 @@ def main():
         type=str,
         nargs="+",
         default=None,
-        help="Gene-level methods to run: meta (default when enabled).",
+        help="Gene-level methods to run: meta (default when enabled), lmm.",
     )
     parser.add_argument(
         "--gene-out-dir",
