@@ -235,7 +235,8 @@ def pmd_std_res_and_stats(input_file,
                             gene_out_dir: str | None = None,
                             gene_figures: bool = False,
                             gene_figures_dir: str | None = None,
-                            gene_forest_genes: list[str] | None = None):
+                            gene_forest_genes: list[str] | None = None,
+                            gene_progress: bool = False):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -396,6 +397,22 @@ def pmd_std_res_and_stats(input_file,
                         forest_genes=[str(g) for g in gene_forest_genes],
                         focal_vars=[str(v) for v in focal_vars],
                     )
+
+            if gene_progress:
+                msg_parts = []
+                if gene_meta is not None:
+                    msg_parts.append(f"meta={gene_meta.shape[0]}")
+                if gene_lmm is not None:
+                    msg_parts.append(f"lmm={gene_lmm.shape[0]}")
+                if gene_qc is not None:
+                    msg_parts.append(f"qc={gene_qc.shape[0]}")
+                if msg_parts:
+                    print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})")
+                if gene_lmm is not None and (not gene_lmm.empty):
+                    method_counts = gene_lmm["method"].value_counts(dropna=False).to_dict()
+                    source_counts = gene_lmm["p_primary_source"].value_counts(dropna=False).to_dict()
+                    print("gene-level lmm methods:", method_counts)
+                    print("gene-level lmm p sources:", source_counts)
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
@@ -466,6 +483,12 @@ def main():
         default=None,
         help="Optional gene id(s) to generate per-guide forest plots for (requires --gene-figures).",
     )
+    parser.add_argument(
+        "--gene-progress",
+        dest="gene_progress",
+        action="store_true",
+        help="Print a short summary of gene-level execution (counts + fallbacks).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -485,7 +508,8 @@ def main():
                           gene_out_dir=args.gene_out_dir,
                           gene_figures=args.gene_figures,
                           gene_figures_dir=args.gene_figures_dir,
-                          gene_forest_genes=args.gene_forest_genes)
+                          gene_forest_genes=args.gene_forest_genes,
+                          gene_progress=args.gene_progress)
 
 
 
