@@ -159,7 +159,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
 - [x] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
 - [x] Golden tests for baseline outputs (byte-for-byte).
-- [ ] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
+- [x] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
 - [ ] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
 
 #### P3.9 — Performance / UX
