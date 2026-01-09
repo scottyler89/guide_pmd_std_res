@@ -320,7 +320,9 @@ def pmd_std_res_and_stats(input_file,
         else:
             keep_cols = mm.columns
             stats_df, resids_df = run_glm_analysis(std_res, mm[keep_cols])
-            design_cols = len(keep_cols) + (0 if "Intercept" in keep_cols else 1)
+            # Back-compat: dof for Stouffer-combined p-values is computed from the
+            # user-provided model-matrix columns (even if an intercept is added).
+            design_cols = len(keep_cols)
         stats_df.to_csv(output_stats_file, sep="\t")
         resids_df.to_csv(resids_file, sep="\t")
         if p_combine_idx is not None:
