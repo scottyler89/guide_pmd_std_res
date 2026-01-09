@@ -54,8 +54,9 @@ Primary objective: add gene-level inference that **complements** (and never repl
 Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 
 #### P3.0 — Non-negotiables (Back-Compat + IO)
-- [ ] Define the “baseline outputs set” (which files must remain byte-identical; starting at `v0.1.5`).
-- [ ] Add fixture input(s) + committed golden baseline outputs; CI fails if any baseline file differs byte-for-byte.
+- [x] Define the “baseline outputs set” (which files must remain byte-identical; starting at `v0.1.5`).
+  - [x] Fixture `tests/fixtures/baseline_small`: `PMD_std_res.tsv`, `PMD_std_res_stats.tsv`, `PMD_std_res_stats_resids.tsv`
+- [x] Add fixture input(s) + committed golden baseline outputs; CI fails if any baseline file differs byte-for-byte.
 - [x] Ensure gene-level outputs are **strictly opt-in** (default execution path must not import/execute gene-level code).
 - [x] Ensure gene-level outputs write **only new files** (never modifies baseline TSV schemas; no extra columns).
 - [x] Add a “baseline-only” test to guarantee gene-level flags default to disabled.
@@ -156,7 +157,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 #### P3.8 — Testing + Validation (focus on invariants, calibration, and regressions)
 - [x] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
 - [ ] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
-- [ ] Golden tests for baseline outputs (byte-for-byte).
+- [x] Golden tests for baseline outputs (byte-for-byte).
 - [ ] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
 - [ ] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
 
