@@ -54,7 +54,6 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
         n_boot=1,
         seed=1,
         file_sep="tsv",
-        gene_level=False,
     )
 
     mod.pmd_std_res_and_stats(
@@ -86,3 +85,5 @@ def test_gene_level_meta_is_opt_in_and_baseline_is_unchanged(tmp_path, monkeypat
     assert not (out_baseline / "PMD_std_res_gene_meta.tsv").exists()
     assert (out_gene / "PMD_std_res_gene_meta.tsv").is_file()
 
+    assert sorted(p.name for p in out_baseline.iterdir()) == sorted(baseline_files)
+    assert sorted(p.name for p in out_gene.iterdir()) == sorted(baseline_files + ["PMD_std_res_gene_meta.tsv"])
