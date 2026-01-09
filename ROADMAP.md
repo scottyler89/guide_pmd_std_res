@@ -24,6 +24,7 @@ This roadmap tracks repo hygiene + modernization work for `guide_pmd_std_res`.
 - [x] Replace `raise "..."` with a real exception type.
 - [x] Fix CLI arg typing/defaults (`annotation_cols` should be `int`).
 - [x] Make `run_glm_analysis()` handle the “all-zero-variance features” case safely.
+- [x] Reject degenerate `n_boot < 2` (prevents invalid PMD z-scores).
 - [x] Add minimal smoke tests for the above.
 
 Back-compat notes:
@@ -139,11 +140,11 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [ ] optional: `PMD_std_res_gene_mixture.tsv`, `PMD_std_res_gene_guide_details.tsv`
 
 #### P3.6 — Figures (Add-on only)
-- [ ] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
-- [ ] Plan A vs Plan B comparison scatter (effect size and -log10 p).
-- [ ] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
+- [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
+- [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
+- [x] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
 - [ ] Per-gene forest plot (per-guide slopes + SE) for flagged/top genes.
-- [ ] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
+- [x] Output directory + naming convention (e.g., `gene_level_figures/` with deterministic filenames).
 
 #### P3.7 — CLI + API (opt-in; no baseline changes)
 - [x] Add CLI flags (additive):
@@ -152,6 +153,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-id-col ...`
   - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`, `qc`)
   - [x] `--gene-out-dir ...`
+  - [x] `--gene-figures` and `--gene-figures-dir`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
 - [x] Ensure baseline pipeline path is unchanged when `--gene-level` is not set.
 

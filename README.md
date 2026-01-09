@@ -31,7 +31,7 @@ This script can be easily installed with pip:
 | `-pre_regress_vars`      | `list`  | Variables for pre-regression rather than joint modeling.                                                                                             | `[]`         |
 | `-annotation_cols`       | `str`   | Number of annotation columns in the input file. The first column is treated as a unique ID (e.g., guide ID), followed by additional annotations.      | `2`          |
 | `-p_combine_idx`         | `str`   | Zero-based column index for combining p-values using Stouffer's Method when variables have multiple measures across rows.                             | `None`       |
-| `-n_boot`                | `int`   | Number of bootstrap shuffled nulls to run.                                                                                                           | `100`        |
+| `-n_boot`                | `int`   | Number of bootstrap shuffled nulls to run (must be >= 2).                                                                                            | `100`        |
 | `-seed`                  | `int`   | Random seed for reproducibility.                                                                                                                     | `123456`     |
 | `-file_type`             | `str`   | File type of the input data (`tsv` or `csv`).                                                                                                        | `tsv`        |
 | `--gene-level`           | flag    | Enable **gene-level aggregation outputs** (opt-in; baseline outputs remain unchanged).                                                               | `False`      |
