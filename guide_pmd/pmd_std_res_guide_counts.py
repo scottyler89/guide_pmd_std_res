@@ -222,7 +222,12 @@ def pmd_std_res_and_stats(input_file,
                             pre_regress_vars = None,
                             n_boot = 100, 
                             seed = 123456, 
-                            file_sep="tsv"):
+                            file_sep="tsv",
+                            gene_level: bool = False,
+                            focal_vars: list[str] | None = None,
+                            gene_id_col: int = 1,
+                            gene_methods: list[str] | None = None,
+                            gene_out_dir: str | None = None):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -255,6 +260,7 @@ def pmd_std_res_and_stats(input_file,
     stats_df = None
     resids_df = None
     comb_stats = None
+    first_regressed = None
     # If we're running the stats, then get them going:
     if model_matrix_file is not None:
         print("running the statistics, using the specified model matrix")
@@ -295,6 +301,31 @@ def pmd_std_res_and_stats(input_file,
             comb_stats = combine_p(stats_df, annotation_table, p_combine_idx, dof)
             output_stats_file = os.path.join(output_dir, "PMD_std_res_combined_stats.tsv")
             comb_stats.to_csv(output_stats_file, sep="\t")
+
+        if gene_level:
+            if focal_vars is None or len(focal_vars) == 0:
+                raise ValueError("gene_level requires focal_vars (one or more model-matrix column names)")
+            if gene_methods is None:
+                gene_methods = ["meta"]
+            gene_out_dir = output_dir if gene_out_dir is None else gene_out_dir
+            from . import gene_level as gene_level_mod
+
+            gene_response = std_res if first_regressed is None else first_regressed
+            gene_mm = mm[keep_cols]
+            gene_add_intercept = not (len(pre_regress_vars) > 0)
+
+            if "meta" in gene_methods:
+                gene_meta = gene_level_mod.compute_gene_meta(
+                    gene_response,
+                    annotation_table,
+                    gene_mm,
+                    focal_vars=focal_vars,
+                    gene_id_col=gene_id_col,
+                    add_intercept=gene_add_intercept,
+                )
+                gene_level_mod.write_gene_meta_tsv(gene_meta, gene_out_dir, prefix="PMD_std_res")
+    elif gene_level:
+        raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
 
 
@@ -311,6 +342,37 @@ def main():
     parser.add_argument("-n_boot", type = int, help= "the number of bootstrap shuffled nulls to run. (Default=100)", default = 100)
     parser.add_argument("-seed", type = int, help= "set the seed for reproducibility (Default=123456)", default = 123456)
     parser.add_argument("-file_type", type = str, help= "tsv or csv, defulat is tsv", default = "tsv")
+    parser.add_argument("--gene-level", dest="gene_level", action="store_true", help="Enable gene-level outputs (opt-in).")
+    parser.add_argument(
+        "--focal-vars",
+        dest="focal_vars",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Model-matrix column name(s) to compute gene-level effects for (required when --gene-level).",
+    )
+    parser.add_argument(
+        "--gene-id-col",
+        dest="gene_id_col",
+        type=int,
+        default=1,
+        help="0-based column index in the original input file for the gene id (default=1; 0 is the guide id/index).",
+    )
+    parser.add_argument(
+        "--gene-methods",
+        dest="gene_methods",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Gene-level methods to run: meta (default when enabled).",
+    )
+    parser.add_argument(
+        "--gene-out-dir",
+        dest="gene_out_dir",
+        type=str,
+        default=None,
+        help="Optional output directory for gene-level files (default: same as -out_dir).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -322,7 +384,12 @@ def main():
                           pre_regress_vars = args.pre_regress_vars,
                           n_boot = args.n_boot, 
                           seed = args.seed,
-                          file_sep=args.file_type)
+                          file_sep=args.file_type,
+                          gene_level=args.gene_level,
+                          focal_vars=args.focal_vars,
+                          gene_id_col=args.gene_id_col,
+                          gene_methods=args.gene_methods,
+                          gene_out_dir=args.gene_out_dir)
 
 
 
