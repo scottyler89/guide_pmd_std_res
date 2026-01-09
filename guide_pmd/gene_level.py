@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 
 import numpy as np
@@ -239,11 +238,3 @@ def compute_gene_meta(
     if not out.empty:
         out["p_adj"] = out.groupby("focal_var", sort=False)["p"].transform(_nan_fdr)
     return out
-
-
-def write_gene_meta_tsv(gene_meta: pd.DataFrame, output_dir: str, *, prefix: str = "PMD_std_res") -> str:
-    os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"{prefix}_gene_meta.tsv")
-    gene_meta.to_csv(out_path, sep="\t", index=False)
-    return out_path
-

@@ -323,7 +323,9 @@ def pmd_std_res_and_stats(input_file,
                     gene_id_col=gene_id_col,
                     add_intercept=gene_add_intercept,
                 )
-                gene_level_mod.write_gene_meta_tsv(gene_meta, gene_out_dir, prefix="PMD_std_res")
+                os.makedirs(gene_out_dir, exist_ok=True)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
+                gene_meta.to_csv(gene_out_path, sep="\t", index=False)
     elif gene_level:
         raise ValueError("gene_level requires model_matrix_file (gene-level inference needs a design matrix)")
     return std_res, stats_df, resids_df, comb_stats
