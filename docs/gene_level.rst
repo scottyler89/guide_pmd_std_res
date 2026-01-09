@@ -88,3 +88,4 @@ Notes
 -----
 
 - ``-n_boot`` must be ``>= 2`` (smaller values produce degenerate null standard deviations in PMD).
+- A small synthetic audit harness is available at ``scripts/audit_gene_level.py``.
