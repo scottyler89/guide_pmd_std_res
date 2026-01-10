@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import warnings
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from scipy.stats import chi2
 from scipy.stats import norm
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
 from .gene_level import _align_model_matrix
 from .gene_level import _get_gene_ids
@@ -41,8 +43,20 @@ def _fit_mixedlm(
     max_iter: int,
 ) -> tuple[sm.regression.mixed_linear_model.MixedLMResults | None, str | None]:
     try:
-        model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
-        res = model.fit(reml=False, method="lbfgs", maxiter=max_iter, disp=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings(
+                "ignore",
+                category=UserWarning,
+                message=r"^Random effects covariance is singular.*",
+            )
+            warnings.filterwarnings(
+                "ignore",
+                category=UserWarning,
+                message=r"^The random effects covariance matrix is singular.*",
+            )
+            model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
+            res = model.fit(reml=False, method="lbfgs", maxiter=max_iter, disp=False)
     except Exception as exc:
         return None, str(exc)
     return res, None
