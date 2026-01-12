@@ -58,6 +58,9 @@ def _fit_mixedlm(
             category=UserWarning,
             message=r"^The random effects covariance matrix is singular.*",
         )
+        # SciPy optimizer warnings can be very noisy for some methods (Powell/NM)
+        # even when the fit converges to a usable solution.
+        warnings.filterwarnings("ignore", category=RuntimeWarning, module=r"scipy\.optimize\._optimize")
 
         model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
 
