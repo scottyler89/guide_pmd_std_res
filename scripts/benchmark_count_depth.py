@@ -29,6 +29,8 @@ class CountDepthBenchmarkConfig:
     # Mean counts per guide at depth_factor=1.0 (log-normal parameters).
     guide_lambda_log_mean: float
     guide_lambda_log_sd: float
+    # Additional gene-level baseline heterogeneity on log(lambda).
+    gene_lambda_log_sd: float
     # Per-sample depth variation (log-normal parameters for a multiplicative factor).
     depth_log_mean: float
     depth_log_sd: float
@@ -39,7 +41,11 @@ class CountDepthBenchmarkConfig:
     # True treatment effects (gene-level), and guide-level slope heterogeneity.
     frac_signal: float
     effect_sd: float
+    # Guide-level on-target slope deviations (applied only for signal genes).
     guide_slope_sd: float
+    # Optional "bad guide" off-target contamination (applied regardless of is_signal).
+    offtarget_guide_frac: float
+    offtarget_slope_sd: float
     # Construct a PMD-like response from simulated counts.
     pseudocount: float
     response_mode: str
@@ -61,10 +67,20 @@ class CountDepthBenchmarkConfig:
             raise ValueError("guides_per_gene must be > 0")
         if self.n_control <= 0 or self.n_treatment <= 0:
             raise ValueError("n_control and n_treatment must be > 0")
+        if float(self.guide_lambda_log_sd) < 0:
+            raise ValueError("guide_lambda_log_sd must be >= 0")
+        if float(self.gene_lambda_log_sd) < 0:
+            raise ValueError("gene_lambda_log_sd must be >= 0")
         if self.depth_poisson_scale < 0:
             raise ValueError("depth_poisson_scale must be >= 0")
         if not (0.0 <= self.frac_signal <= 1.0):
             raise ValueError("frac_signal must be in [0, 1]")
+        if float(self.guide_slope_sd) < 0:
+            raise ValueError("guide_slope_sd must be >= 0")
+        if not (0.0 <= float(self.offtarget_guide_frac) <= 1.0):
+            raise ValueError("offtarget_guide_frac must be in [0, 1]")
+        if float(self.offtarget_slope_sd) < 0:
+            raise ValueError("offtarget_slope_sd must be >= 0")
         if self.pseudocount <= 0:
             raise ValueError("pseudocount must be > 0")
         if self.response_mode not in {"log_counts", "guide_zscore_log_counts"}:
@@ -102,7 +118,7 @@ def _simulate_depth_factors(
 
 def simulate_counts_and_std_res(
     cfg: CountDepthBenchmarkConfig,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cfg.validate()
     rng = np.random.default_rng(int(cfg.seed))
 
@@ -128,23 +144,51 @@ def simulate_counts_and_std_res(
     gene_theta = rng.normal(loc=0.0, scale=float(cfg.effect_sd), size=int(cfg.n_genes)).astype(float)
     gene_theta = np.where(is_signal, gene_theta, 0.0)
 
-    truth_gene = pd.DataFrame({"gene_id": gene_ids, "is_signal": is_signal.astype(bool), "theta_true": gene_theta.astype(float)})
+    gene_log_lambda = rng.normal(
+        loc=float(cfg.guide_lambda_log_mean),
+        scale=float(cfg.gene_lambda_log_sd),
+        size=int(cfg.n_genes),
+    ).astype(float)
 
-    n_guides = int(cfg.n_genes) * int(cfg.guides_per_gene)
-    # Per-guide baseline means (independent of sample depth).
-    guide_lambda = rng.lognormal(mean=float(cfg.guide_lambda_log_mean), sigma=float(cfg.guide_lambda_log_sd), size=n_guides).astype(float)
+    truth_gene = pd.DataFrame(
+        {
+            "gene_id": gene_ids,
+            "is_signal": is_signal.astype(bool),
+            "theta_true": gene_theta.astype(float),
+            "log_lambda_gene": gene_log_lambda.astype(float),
+        }
+    )
 
     guides: list[str] = []
     gene_for_guide: list[str] = []
     counts_rows: list[np.ndarray] = []
     slope_dev_rows: list[float] = []
+    offtarget_dev_rows: list[float] = []
+    is_offtarget_rows: list[bool] = []
+    theta_guide_rows: list[float] = []
+    log_lambda_guide_rows: list[float] = []
 
-    guide_idx = 0
-    for gene_id, theta in zip(gene_ids, gene_theta):
+    for gene_i, (gene_id, theta) in enumerate(zip(gene_ids, gene_theta)):
+        gene_is_signal = bool(is_signal[gene_i])
+        gene_ll = float(gene_log_lambda[gene_i])
         for j in range(int(cfg.guides_per_gene)):
             guide_id = f"{gene_id}__g{j+1:02d}"
-            slope_dev = float(rng.normal(loc=0.0, scale=float(cfg.guide_slope_sd))) if float(cfg.guide_slope_sd) > 0 else 0.0
-            mu = guide_lambda[guide_idx] * depth_factor * np.exp((float(theta) + slope_dev) * treatment)
+            log_lambda_guide = gene_ll + float(rng.normal(loc=0.0, scale=float(cfg.guide_lambda_log_sd)))
+            lambda_base = float(np.exp(log_lambda_guide))
+            slope_dev = (
+                float(rng.normal(loc=0.0, scale=float(cfg.guide_slope_sd)))
+                if gene_is_signal and float(cfg.guide_slope_sd) > 0
+                else 0.0
+            )
+            is_offtarget = bool(rng.random() < float(cfg.offtarget_guide_frac)) if float(cfg.offtarget_guide_frac) > 0 else False
+            offtarget_dev = (
+                float(rng.normal(loc=0.0, scale=float(cfg.offtarget_slope_sd)))
+                if is_offtarget and float(cfg.offtarget_slope_sd) > 0
+                else 0.0
+            )
+            theta_guide = float(theta) + slope_dev + offtarget_dev
+
+            mu = lambda_base * depth_factor * np.exp(theta_guide * treatment)
             mu = np.clip(mu, a_min=0.0, a_max=None)
             counts = rng.poisson(mu).astype(int)
 
@@ -152,7 +196,10 @@ def simulate_counts_and_std_res(
             gene_for_guide.append(gene_id)
             counts_rows.append(counts)
             slope_dev_rows.append(slope_dev)
-            guide_idx += 1
+            offtarget_dev_rows.append(offtarget_dev)
+            is_offtarget_rows.append(is_offtarget)
+            theta_guide_rows.append(theta_guide)
+            log_lambda_guide_rows.append(log_lambda_guide)
 
     counts_df = pd.DataFrame(counts_rows, index=guides, columns=sample_ids)
     annotation_df = pd.DataFrame({"gene_symbol": gene_for_guide}, index=guides)
@@ -176,8 +223,14 @@ def simulate_counts_and_std_res(
         {
             "guide_id": guides,
             "gene_id": gene_for_guide,
-            "lambda_base": guide_lambda[: len(guides)].astype(float),
+            "log_lambda_gene": np.repeat(gene_log_lambda, int(cfg.guides_per_gene)).astype(float),
+            "log_lambda_guide": np.asarray(log_lambda_guide_rows, dtype=float),
+            "lambda_base": np.exp(np.asarray(log_lambda_guide_rows, dtype=float)).astype(float),
+            "theta_gene": np.repeat(gene_theta, int(cfg.guides_per_gene)).astype(float),
             "slope_dev": np.asarray(slope_dev_rows, dtype=float),
+            "offtarget_dev": np.asarray(offtarget_dev_rows, dtype=float),
+            "theta_guide": np.asarray(theta_guide_rows, dtype=float),
+            "is_offtarget": np.asarray(is_offtarget_rows, dtype=bool),
         }
     )
     return (
@@ -186,6 +239,7 @@ def simulate_counts_and_std_res(
         std_res_df,
         model_matrix,
         truth_gene.merge(truth_guide.groupby("gene_id").size().rename("m_guides"), on="gene_id"),
+        truth_guide,
     )
 
 
@@ -225,13 +279,14 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     cfg.validate()
     os.makedirs(out_dir, exist_ok=True)
 
-    counts_df, ann_df, std_res_df, mm, truth_gene = simulate_counts_and_std_res(cfg)
+    counts_df, ann_df, std_res_df, mm, truth_gene, truth_guide = simulate_counts_and_std_res(cfg)
 
     # Write inputs for reproducibility.
     counts_path = os.path.join(out_dir, "sim_counts.tsv")
     mm_path = os.path.join(out_dir, "sim_model_matrix.tsv")
     std_res_path = os.path.join(out_dir, "sim_std_res.tsv")
     truth_path = os.path.join(out_dir, "sim_truth_gene.tsv")
+    truth_guide_path = os.path.join(out_dir, "sim_truth_guide.tsv")
 
     counts_out = counts_df.copy()
     counts_out.insert(0, "gene_symbol", ann_df["gene_symbol"])
@@ -240,6 +295,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     mm.to_csv(mm_path, sep="\t", index_label="sample_id")
     std_res_df.to_csv(std_res_path, sep="\t")
     truth_gene.to_csv(truth_path, sep="\t", index=False)
+    truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
 
     focal_vars = ["treatment"]
 
@@ -317,6 +373,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
             "truth_gene_tsv": truth_path,
+            "truth_guide_tsv": truth_guide_path,
             "gene_meta_tsv": meta_out_path if "meta" in cfg.methods else "",
             "gene_lmm_tsv": lmm_out_path if "lmm" in cfg.methods else "",
             "gene_qc_tsv": qc_out_path if "qc" in cfg.methods else "",
@@ -355,6 +412,7 @@ def main() -> None:
     parser.add_argument("--n-treatment", type=int, default=12, help="Number of treatment samples.")
     parser.add_argument("--guide-lambda-log-mean", type=float, default=np.log(200.0), help="log-mean baseline guide lambda.")
     parser.add_argument("--guide-lambda-log-sd", type=float, default=0.8, help="log-sd baseline guide lambda.")
+    parser.add_argument("--gene-lambda-log-sd", type=float, default=0.5, help="Additional gene-level log-sd on lambda (default: 0.5).")
     parser.add_argument("--depth-log-mean", type=float, default=0.0, help="log-mean of depth factor.")
     parser.add_argument("--depth-log-sd", type=float, default=1.0, help="log-sd of depth factor (order-of-magnitude variation ~ 1).")
     parser.add_argument("--depth-poisson-scale", type=float, default=0.0, help="Optional Poisson noise on depth factors (0 disables).")
@@ -362,6 +420,8 @@ def main() -> None:
     parser.add_argument("--frac-signal", type=float, default=0.2, help="Fraction of truly non-null genes.")
     parser.add_argument("--effect-sd", type=float, default=0.5, help="SD of gene-level treatment effects.")
     parser.add_argument("--guide-slope-sd", type=float, default=0.2, help="SD of guide-level slope deviations.")
+    parser.add_argument("--offtarget-guide-frac", type=float, default=0.0, help="Fraction of guides with off-target effects (default: 0).")
+    parser.add_argument("--offtarget-slope-sd", type=float, default=0.0, help="SD of off-target slope deviations (default: 0).")
     parser.add_argument("--pseudocount", type=float, default=0.5, help="Pseudocount used in log transform.")
     parser.add_argument(
         "--response-mode",
@@ -394,6 +454,7 @@ def main() -> None:
         n_treatment=args.n_treatment,
         guide_lambda_log_mean=args.guide_lambda_log_mean,
         guide_lambda_log_sd=args.guide_lambda_log_sd,
+        gene_lambda_log_sd=args.gene_lambda_log_sd,
         depth_log_mean=args.depth_log_mean,
         depth_log_sd=args.depth_log_sd,
         depth_poisson_scale=args.depth_poisson_scale,
@@ -401,6 +462,8 @@ def main() -> None:
         frac_signal=args.frac_signal,
         effect_sd=args.effect_sd,
         guide_slope_sd=args.guide_slope_sd,
+        offtarget_guide_frac=args.offtarget_guide_frac,
+        offtarget_slope_sd=args.offtarget_slope_sd,
         pseudocount=args.pseudocount,
         response_mode=str(args.response_mode),
         include_depth_covariate=bool(args.include_depth_covariate),
