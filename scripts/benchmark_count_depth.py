@@ -377,6 +377,20 @@ def _write_qq_plot(p: pd.Series, *, out_path: str, title: str) -> dict[str, floa
     return {"n": n, "lambda_gc": lambda_gc}
 
 
+def _qq_stats(p: pd.Series) -> dict[str, float | int | None]:
+    from scipy.stats import chi2
+
+    p_arr = p.to_numpy(dtype=float)
+    mask = np.isfinite(p_arr) & (p_arr > 0.0) & (p_arr <= 1.0)
+    p_arr = p_arr[mask]
+    n = int(p_arr.size)
+    if n == 0:
+        return {"n": 0, "lambda_gc": None}
+    chi = chi2.isf(p_arr, 1)
+    lambda_gc = float(np.median(chi) / float(chi2.ppf(0.5, 1)))
+    return {"n": n, "lambda_gc": lambda_gc}
+
+
 def _json_sanitize(obj: object) -> object:
     if isinstance(obj, dict):
         return {str(k): _json_sanitize(v) for k, v in obj.items()}
@@ -535,27 +549,44 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "confusion_alpha": _confusion(wald_called_alpha, is_signal_arr),
             "confusion_fdr_q": _confusion(wald_called_q, is_signal_arr),
         }
+    qq: dict[str, object] = {}
+    wrote_any_plot = False
+    fig_dir = os.path.join(out_dir, "figures")
 
-    if bool(cfg.qq_plots):
-        fig_dir = os.path.join(out_dir, "figures")
-        os.makedirs(fig_dir, exist_ok=True)
-
-        qq_outputs: dict[str, object] = {}
-        if "meta" in cfg.methods and not meta_df.empty:
+    if "meta" in cfg.methods and not meta_df.empty:
+        if bool(cfg.qq_plots):
+            os.makedirs(fig_dir, exist_ok=True)
             out_path = os.path.join(fig_dir, "qq_meta_p_null.png")
-            qq_outputs["meta_p_null_png"] = out_path
-            report.setdefault("qq", {})["meta_p_null"] = _write_qq_plot(meta_null, out_path=out_path, title="Meta p (null)")
-        if "lmm" in cfg.methods and not lmm_df.empty and "lrt_p" in lmm_join.columns:
-            out_path = os.path.join(fig_dir, "qq_lmm_lrt_p_null.png")
-            qq_outputs["lmm_lrt_p_null_png"] = out_path
-            report.setdefault("qq", {})["lmm_lrt_p_null"] = _write_qq_plot(lrt_null, out_path=out_path, title="LMM LRT p (null)")
-        if "lmm" in cfg.methods and not lmm_df.empty and "wald_p" in lmm_join.columns:
-            out_path = os.path.join(fig_dir, "qq_lmm_wald_p_null.png")
-            qq_outputs["lmm_wald_p_null_png"] = out_path
-            report.setdefault("qq", {})["lmm_wald_p_null"] = _write_qq_plot(wald_null, out_path=out_path, title="LMM Wald p (null)")
+            report["outputs"]["meta_p_null_png"] = out_path
+            qq["meta_p_null"] = _write_qq_plot(meta_null, out_path=out_path, title="Meta p (null)")
+            wrote_any_plot = True
+        else:
+            qq["meta_p_null"] = _qq_stats(meta_null)
 
+    if "lmm" in cfg.methods and not lmm_df.empty and "lrt_p" in lmm_join.columns:
+        if bool(cfg.qq_plots):
+            os.makedirs(fig_dir, exist_ok=True)
+            out_path = os.path.join(fig_dir, "qq_lmm_lrt_p_null.png")
+            report["outputs"]["lmm_lrt_p_null_png"] = out_path
+            qq["lmm_lrt_p_null"] = _write_qq_plot(lrt_null, out_path=out_path, title="LMM LRT p (null)")
+            wrote_any_plot = True
+        else:
+            qq["lmm_lrt_p_null"] = _qq_stats(lrt_null)
+
+    if "lmm" in cfg.methods and not lmm_df.empty and "wald_p" in lmm_join.columns:
+        if bool(cfg.qq_plots):
+            os.makedirs(fig_dir, exist_ok=True)
+            out_path = os.path.join(fig_dir, "qq_lmm_wald_p_null.png")
+            report["outputs"]["lmm_wald_p_null_png"] = out_path
+            qq["lmm_wald_p_null"] = _write_qq_plot(wald_null, out_path=out_path, title="LMM Wald p (null)")
+            wrote_any_plot = True
+        else:
+            qq["lmm_wald_p_null"] = _qq_stats(wald_null)
+
+    if qq:
+        report["qq"] = qq
+    if wrote_any_plot:
         report["outputs"]["figures_dir"] = fig_dir
-        report["outputs"].update(qq_outputs)
 
     return report
 

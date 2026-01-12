@@ -34,6 +34,26 @@ def main() -> None:
     parser.add_argument("--guides-per-gene", type=int, default=4, help="Guides per gene.")
     parser.add_argument("--n-control", type=int, default=12, help="Number of control samples.")
     parser.add_argument("--n-treatment", type=int, default=12, help="Number of treatment samples.")
+    parser.add_argument(
+        "--guide-lambda-log-mean",
+        type=float,
+        default=5.298317366548036,
+        help="log-mean baseline guide lambda (default: log(200)).",
+    )
+    parser.add_argument(
+        "--guide-lambda-log-sd",
+        type=float,
+        nargs="+",
+        default=[0.8],
+        help="Guide log-sd on lambda within gene (default: 0.8).",
+    )
+    parser.add_argument(
+        "--gene-lambda-log-sd",
+        type=float,
+        nargs="+",
+        default=[0.5],
+        help="Gene-level log-sd on lambda (default: 0.5).",
+    )
     parser.add_argument("--depth-log-sd", type=float, nargs="+", default=[1.0], help="Depth log-sd values (default: 1.0).")
     parser.add_argument(
         "--treatment-depth-multiplier",
@@ -56,9 +76,24 @@ def main() -> None:
         help="Response construction mode (default: log_counts).",
     )
     parser.add_argument("--pmd-n-boot", type=int, default=100, help="PMD num_boot (only used for response-mode=pmd_std_res).")
+    parser.add_argument(
+        "--qq-plots",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Write QQ plot PNGs for each run (default: disabled; stats are still computed).",
+    )
     parser.add_argument("--methods", type=str, nargs="+", choices=["meta", "lmm", "qc"], default=["meta", "qc"])
-    parser.add_argument("--frac-signal", type=float, default=0.0, help="Fraction of signal genes (default: 0; null calibration runs).")
-    parser.add_argument("--effect-sd", type=float, default=0.5, help="Effect SD for signal genes (default: 0.5).")
+    parser.add_argument(
+        "--frac-signal",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        help="Fraction of signal genes (default: 0; null calibration runs).",
+    )
+    parser.add_argument("--effect-sd", type=float, nargs="+", default=[0.5], help="Effect SD for signal genes (default: 0.5).")
+    parser.add_argument("--guide-slope-sd", type=float, nargs="+", default=[0.2], help="Guide slope SD (signal genes only).")
+    parser.add_argument("--offtarget-guide-frac", type=float, nargs="+", default=[0.0], help="Off-target guide fraction (default: 0).")
+    parser.add_argument("--offtarget-slope-sd", type=float, nargs="+", default=[0.0], help="Off-target slope SD (default: 0).")
     parser.add_argument("--max-iter", type=int, default=200, help="Max iter for MixedLM (only used when methods include lmm).")
     args = parser.parse_args()
 
@@ -67,14 +102,36 @@ def main() -> None:
     include_depth_opts = [False, True] if args.include_depth_covariate is None else [bool(args.include_depth_covariate)]
 
     rows: list[dict[str, object]] = []
-    for seed, n_genes, depth_log_sd, tdm, include_depth in product(
+    for seed, n_genes, depth_log_sd, tdm, include_depth, frac_signal, effect_sd, guide_slope_sd, gene_lambda_log_sd, guide_lambda_log_sd, ot_frac, ot_sd in product(
         [int(s) for s in args.seeds],
         [int(n) for n in args.n_genes],
         [float(x) for x in args.depth_log_sd],
         [float(x) for x in args.treatment_depth_multiplier],
         include_depth_opts,
+        [float(x) for x in args.frac_signal],
+        [float(x) for x in args.effect_sd],
+        [float(x) for x in args.guide_slope_sd],
+        [float(x) for x in args.gene_lambda_log_sd],
+        [float(x) for x in args.guide_lambda_log_sd],
+        [float(x) for x in args.offtarget_guide_frac],
+        [float(x) for x in args.offtarget_slope_sd],
     ):
-        tag = f"seed={seed}__n_genes={n_genes}__dlsd={depth_log_sd}__tdm={tdm}__depthcov={int(include_depth)}"
+        tag = (
+            f"seed={seed}"
+            f"__rm={args.response_mode}"
+            f"__pmdnb={int(args.pmd_n_boot)}"
+            f"__n_genes={n_genes}"
+            f"__dlsd={depth_log_sd}"
+            f"__tdm={tdm}"
+            f"__depthcov={int(include_depth)}"
+            f"__fs={frac_signal}"
+            f"__esd={effect_sd}"
+            f"__gssd={guide_slope_sd}"
+            f"__gllsd={gene_lambda_log_sd}"
+            f"__gllsd_within={guide_lambda_log_sd}"
+            f"__otf={ot_frac}"
+            f"__otsd={ot_sd}"
+        )
         run_dir = os.path.join(args.out_dir, tag)
         cmd = [
             sys.executable,
@@ -89,6 +146,12 @@ def main() -> None:
             str(int(args.n_control)),
             "--n-treatment",
             str(int(args.n_treatment)),
+            "--guide-lambda-log-mean",
+            str(float(args.guide_lambda_log_mean)),
+            "--guide-lambda-log-sd",
+            str(float(guide_lambda_log_sd)),
+            "--gene-lambda-log-sd",
+            str(float(gene_lambda_log_sd)),
             "--depth-log-sd",
             str(depth_log_sd),
             "--treatment-depth-multiplier",
@@ -96,9 +159,15 @@ def main() -> None:
             "--seed",
             str(seed),
             "--frac-signal",
-            str(float(args.frac_signal)),
+            str(float(frac_signal)),
             "--effect-sd",
-            str(float(args.effect_sd)),
+            str(float(effect_sd)),
+            "--guide-slope-sd",
+            str(float(guide_slope_sd)),
+            "--offtarget-guide-frac",
+            str(float(ot_frac)),
+            "--offtarget-slope-sd",
+            str(float(ot_sd)),
             "--response-mode",
             str(args.response_mode),
             "--pmd-n-boot",
@@ -110,6 +179,7 @@ def main() -> None:
         ]
         if include_depth:
             cmd.append("--include-depth-covariate")
+        cmd.append("--qq-plots" if bool(args.qq_plots) else "--no-qq-plots")
 
         report_path = _run_one(cmd)
         report = _load_json(report_path)
@@ -118,34 +188,78 @@ def main() -> None:
             "tag": tag,
             "report_path": report_path,
             "seed": seed,
+            "pmd_n_boot": int(report["config"]["pmd_n_boot"]),
+            "qq_plots": bool(report["config"]["qq_plots"]),
             "n_genes": n_genes,
+            "guides_per_gene": int(report["config"]["guides_per_gene"]),
             "depth_log_sd": depth_log_sd,
             "treatment_depth_multiplier": tdm,
             "include_depth_covariate": include_depth,
             "response_mode": report["config"]["response_mode"],
+            "guide_lambda_log_mean": float(report["config"]["guide_lambda_log_mean"]),
+            "guide_lambda_log_sd": float(report["config"]["guide_lambda_log_sd"]),
+            "gene_lambda_log_sd": float(report["config"]["gene_lambda_log_sd"]),
             "methods": ",".join(report["config"]["methods"]),
+            "frac_signal": float(report["config"]["frac_signal"]),
+            "effect_sd": float(report["config"]["effect_sd"]),
+            "guide_slope_sd": float(report["config"]["guide_slope_sd"]),
+            "offtarget_guide_frac": float(report["config"]["offtarget_guide_frac"]),
+            "offtarget_slope_sd": float(report["config"]["offtarget_slope_sd"]),
         }
 
         runtime = report.get("runtime_sec", {})
         row.update({f"runtime_{k}": float(v) for k, v in runtime.items()})
 
+        qq = report.get("qq", {})
+
         if "meta" in report:
             row["meta_null_mean_p"] = report["meta"]["null"]["mean"]
             row["meta_null_prop_lt_alpha"] = report["meta"]["null"]["prop_lt_alpha"]
+            row["meta_null_lambda_gc"] = qq.get("meta_p_null", {}).get("lambda_gc")
+            row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
+            row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
+            row["meta_alpha_n_called"] = report["meta"]["confusion_alpha"]["n_called"]
+            row["meta_q_fp"] = report["meta"]["confusion_fdr_q"]["fp"]
+            row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
+            row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
         if "lmm_lrt" in report:
             row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
             row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
             row["lmm_lrt_ok_frac"] = report["lmm_lrt"]["lrt_ok_frac"]
+            row["lmm_lrt_null_lambda_gc"] = qq.get("lmm_lrt_p_null", {}).get("lambda_gc")
+            row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
+            row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
+            row["lmm_lrt_q_fp"] = report["lmm_lrt"]["confusion_fdr_q"]["fp"]
+            row["lmm_lrt_q_fdr"] = report["lmm_lrt"]["confusion_fdr_q"]["fdr"]
         if "lmm_wald" in report:
             row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
             row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
             row["lmm_wald_ok_frac"] = report["lmm_wald"]["wald_ok_frac"]
+            row["lmm_wald_null_lambda_gc"] = qq.get("lmm_wald_p_null", {}).get("lambda_gc")
+            row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
+            row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
+            row["lmm_wald_q_fp"] = report["lmm_wald"]["confusion_fdr_q"]["fp"]
+            row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
 
         rows.append(row)
 
-    df = pd.DataFrame(rows).sort_values(["n_genes", "depth_log_sd", "treatment_depth_multiplier", "include_depth_covariate", "seed"]).reset_index(
-        drop=True
-    )
+    sort_cols = [
+        "response_mode",
+        "pmd_n_boot",
+        "n_genes",
+        "depth_log_sd",
+        "treatment_depth_multiplier",
+        "include_depth_covariate",
+        "frac_signal",
+        "effect_sd",
+        "guide_slope_sd",
+        "gene_lambda_log_sd",
+        "guide_lambda_log_sd",
+        "offtarget_guide_frac",
+        "offtarget_slope_sd",
+        "seed",
+    ]
+    df = pd.DataFrame(rows).sort_values(sort_cols).reset_index(drop=True)
     out_path = os.path.join(args.out_dir, "count_depth_grid_summary.tsv")
     df.to_csv(out_path, sep="\t", index=False)
     print(out_path)
