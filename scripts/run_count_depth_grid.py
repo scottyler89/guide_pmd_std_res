@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from itertools import product
+
+import pandas as pd
+
+
+def _run_one(cmd: list[str]) -> str:
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
+    # benchmark_count_depth prints the report path.
+    out = proc.stdout.strip().splitlines()
+    if not out:
+        raise RuntimeError(f"expected benchmark report path on stdout; got empty stdout\nstderr:\n{proc.stderr}")
+    return out[-1].strip()
+
+
+def _load_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a small count-depth benchmark grid and collect summaries (local).")
+    parser.add_argument("--out-dir", required=True, type=str, help="Root output directory for the grid.")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to run (default: 1 2 3).")
+    parser.add_argument("--n-genes", type=int, nargs="+", default=[500], help="n_genes values to run (default: 500).")
+    parser.add_argument("--guides-per-gene", type=int, default=4, help="Guides per gene.")
+    parser.add_argument("--n-control", type=int, default=12, help="Number of control samples.")
+    parser.add_argument("--n-treatment", type=int, default=12, help="Number of treatment samples.")
+    parser.add_argument("--depth-log-sd", type=float, nargs="+", default=[1.0], help="Depth log-sd values (default: 1.0).")
+    parser.add_argument(
+        "--treatment-depth-multiplier",
+        type=float,
+        nargs="+",
+        default=[1.0, 2.0],
+        help="Treatment depth multipliers (default: 1.0 2.0).",
+    )
+    parser.add_argument(
+        "--include-depth-covariate",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="If set, run only with or without the depth covariate; default runs both.",
+    )
+    parser.add_argument(
+        "--response-mode",
+        type=str,
+        choices=["log_counts", "guide_zscore_log_counts"],
+        default="log_counts",
+        help="Response construction mode (default: log_counts).",
+    )
+    parser.add_argument("--methods", type=str, nargs="+", choices=["meta", "lmm", "qc"], default=["meta", "qc"])
+    parser.add_argument("--frac-signal", type=float, default=0.0, help="Fraction of signal genes (default: 0; null calibration runs).")
+    parser.add_argument("--effect-sd", type=float, default=0.5, help="Effect SD for signal genes (default: 0.5).")
+    parser.add_argument("--max-iter", type=int, default=200, help="Max iter for MixedLM (only used when methods include lmm).")
+    args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    include_depth_opts = [False, True] if args.include_depth_covariate is None else [bool(args.include_depth_covariate)]
+
+    rows: list[dict[str, object]] = []
+    for seed, n_genes, depth_log_sd, tdm, include_depth in product(
+        [int(s) for s in args.seeds],
+        [int(n) for n in args.n_genes],
+        [float(x) for x in args.depth_log_sd],
+        [float(x) for x in args.treatment_depth_multiplier],
+        include_depth_opts,
+    ):
+        tag = f"seed={seed}__n_genes={n_genes}__dlsd={depth_log_sd}__tdm={tdm}__depthcov={int(include_depth)}"
+        run_dir = os.path.join(args.out_dir, tag)
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "benchmark_count_depth.py"),
+            "--out-dir",
+            run_dir,
+            "--n-genes",
+            str(n_genes),
+            "--guides-per-gene",
+            str(int(args.guides_per_gene)),
+            "--n-control",
+            str(int(args.n_control)),
+            "--n-treatment",
+            str(int(args.n_treatment)),
+            "--depth-log-sd",
+            str(depth_log_sd),
+            "--treatment-depth-multiplier",
+            str(tdm),
+            "--seed",
+            str(seed),
+            "--frac-signal",
+            str(float(args.frac_signal)),
+            "--effect-sd",
+            str(float(args.effect_sd)),
+            "--response-mode",
+            str(args.response_mode),
+            "--methods",
+            *[str(m) for m in args.methods],
+            "--max-iter",
+            str(int(args.max_iter)),
+        ]
+        if include_depth:
+            cmd.append("--include-depth-covariate")
+
+        report_path = _run_one(cmd)
+        report = _load_json(report_path)
+
+        row: dict[str, object] = {
+            "tag": tag,
+            "report_path": report_path,
+            "seed": seed,
+            "n_genes": n_genes,
+            "depth_log_sd": depth_log_sd,
+            "treatment_depth_multiplier": tdm,
+            "include_depth_covariate": include_depth,
+            "response_mode": report["config"]["response_mode"],
+            "methods": ",".join(report["config"]["methods"]),
+        }
+
+        runtime = report.get("runtime_sec", {})
+        row.update({f"runtime_{k}": float(v) for k, v in runtime.items()})
+
+        if "meta" in report:
+            row["meta_null_mean_p"] = report["meta"]["null"]["mean"]
+            row["meta_null_prop_lt_alpha"] = report["meta"]["null"]["prop_lt_alpha"]
+        if "lmm_lrt" in report:
+            row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
+            row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
+            row["lmm_lrt_ok_frac"] = report["lmm_lrt"]["lrt_ok_frac"]
+        if "lmm_wald" in report:
+            row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
+            row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
+            row["lmm_wald_ok_frac"] = report["lmm_wald"]["wald_ok_frac"]
+
+        rows.append(row)
+
+    df = pd.DataFrame(rows).sort_values(["n_genes", "depth_log_sd", "treatment_depth_multiplier", "include_depth_covariate", "seed"]).reset_index(
+        drop=True
+    )
+    out_path = os.path.join(args.out_dir, "count_depth_grid_summary.tsv")
+    df.to_csv(out_path, sep="\t", index=False)
+    print(out_path)
+
+
+if __name__ == "__main__":
+    main()
+

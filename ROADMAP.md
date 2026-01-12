@@ -248,7 +248,7 @@ Phase B — Statistical realism upgrades (explicit configs; no silent heuristics
 - [ ] Add optional non-Gaussian noise/heteroskedasticity modes and document which downstream tests remain calibrated.
 
 Phase C — Performance benchmark grid + reporting
-- [ ] Add a small grid runner (sizes, depth variation, effect size) that writes a tidy TSV/JSON for plotting.
+- [x] Add a small grid runner that shells out to `scripts/benchmark_count_depth.py` and writes `count_depth_grid_summary.tsv` (`scripts/run_count_depth_grid.py`).
 - [ ] Add summary figures (runtime vs size; null p-value calibration; power vs effect size) under a benchmark output directory.
 
 Phase D — Tie benchmark back to selection policy

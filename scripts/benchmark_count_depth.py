@@ -49,6 +49,7 @@ class CountDepthBenchmarkConfig:
     allow_random_slope: bool
     min_guides_random_slope: int
     max_iter: int
+    methods: tuple[str, ...]
     seed: int
     alpha: float
     fdr_q: float
@@ -72,6 +73,12 @@ class CountDepthBenchmarkConfig:
             raise ValueError("min_guides_random_slope must be >= 2")
         if self.max_iter <= 0:
             raise ValueError("max_iter must be > 0")
+        if not self.methods:
+            raise ValueError("methods must not be empty")
+        allowed_methods = {"meta", "lmm", "qc"}
+        unknown = set(self.methods).difference(allowed_methods)
+        if unknown:
+            raise ValueError(f"unknown methods: {sorted(unknown)}")
         if self.alpha <= 0 or self.alpha >= 1:
             raise ValueError("alpha must be in (0, 1)")
         if self.fdr_q <= 0 or self.fdr_q >= 1:
@@ -236,53 +243,61 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
 
     focal_vars = ["treatment"]
 
-    t0 = time.perf_counter()
-    meta_df = compute_gene_meta(
-        std_res_df,
-        ann_df,
-        mm,
-        focal_vars=focal_vars,
-        gene_id_col=1,
-        add_intercept=True,
-    )
-    t_meta = time.perf_counter() - t0
+    runtime: dict[str, float] = {}
+    meta_df = pd.DataFrame()
+    lmm_df = pd.DataFrame()
+    qc_df = pd.DataFrame()
+
     meta_out_path = os.path.join(out_dir, "PMD_std_res_gene_meta.tsv")
-    meta_df.to_csv(meta_out_path, sep="\t", index=False)
+    if "meta" in cfg.methods:
+        t0 = time.perf_counter()
+        meta_df = compute_gene_meta(
+            std_res_df,
+            ann_df,
+            mm,
+            focal_vars=focal_vars,
+            gene_id_col=1,
+            add_intercept=True,
+        )
+        runtime["meta"] = float(time.perf_counter() - t0)
+        meta_df.to_csv(meta_out_path, sep="\t", index=False)
 
-    t0 = time.perf_counter()
-    lmm_df = compute_gene_lmm(
-        std_res_df,
-        ann_df,
-        mm,
-        focal_vars=focal_vars,
-        gene_id_col=1,
-        add_intercept=True,
-        allow_random_slope=bool(cfg.allow_random_slope),
-        min_guides_random_slope=int(cfg.min_guides_random_slope),
-        max_iter=int(cfg.max_iter),
-        fallback_to_meta=False,
-    )
-    t_lmm = time.perf_counter() - t0
     lmm_out_path = os.path.join(out_dir, "PMD_std_res_gene_lmm.tsv")
-    lmm_df.to_csv(lmm_out_path, sep="\t", index=False)
+    if "lmm" in cfg.methods:
+        t0 = time.perf_counter()
+        lmm_df = compute_gene_lmm(
+            std_res_df,
+            ann_df,
+            mm,
+            focal_vars=focal_vars,
+            gene_id_col=1,
+            add_intercept=True,
+            allow_random_slope=bool(cfg.allow_random_slope),
+            min_guides_random_slope=int(cfg.min_guides_random_slope),
+            max_iter=int(cfg.max_iter),
+            fallback_to_meta=False,
+        )
+        runtime["lmm"] = float(time.perf_counter() - t0)
+        lmm_df.to_csv(lmm_out_path, sep="\t", index=False)
 
-    t0 = time.perf_counter()
-    qc_df = compute_gene_qc(
-        std_res_df,
-        ann_df,
-        mm,
-        focal_vars=focal_vars,
-        gene_id_col=1,
-        add_intercept=True,
-        residual_matrix=None,
-    )
-    t_qc = time.perf_counter() - t0
     qc_out_path = os.path.join(out_dir, "PMD_std_res_gene_qc.tsv")
-    qc_df.to_csv(qc_out_path, sep="\t", index=False)
+    if "qc" in cfg.methods:
+        t0 = time.perf_counter()
+        qc_df = compute_gene_qc(
+            std_res_df,
+            ann_df,
+            mm,
+            focal_vars=focal_vars,
+            gene_id_col=1,
+            add_intercept=True,
+            residual_matrix=None,
+        )
+        runtime["qc"] = float(time.perf_counter() - t0)
+        qc_df.to_csv(qc_out_path, sep="\t", index=False)
 
     # Evaluate against truth at the gene level.
-    meta_join = truth_gene.merge(meta_df, on="gene_id", how="left")
-    lmm_join = truth_gene.merge(lmm_df, on="gene_id", how="left")
+    meta_join = truth_gene.merge(meta_df, on="gene_id", how="left") if not meta_df.empty else truth_gene.copy()
+    lmm_join = truth_gene.merge(lmm_df, on="gene_id", how="left") if not lmm_df.empty else truth_gene.copy()
 
     meta_null = meta_join.loc[~meta_join["is_signal"], "p"]
     meta_sig = meta_join.loc[meta_join["is_signal"], "p"]
@@ -295,36 +310,39 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     wald_null = wald_p.loc[~lmm_join["is_signal"]] if not lmm_join.empty else pd.Series(dtype=float)
     wald_sig = wald_p.loc[lmm_join["is_signal"]] if not lmm_join.empty else pd.Series(dtype=float)
 
-    report = {
+    report: dict[str, object] = {
         "config": asdict(cfg),
         "outputs": {
             "counts_tsv": counts_path,
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
             "truth_gene_tsv": truth_path,
-            "gene_meta_tsv": meta_out_path,
-            "gene_lmm_tsv": lmm_out_path,
-            "gene_qc_tsv": qc_out_path,
+            "gene_meta_tsv": meta_out_path if "meta" in cfg.methods else "",
+            "gene_lmm_tsv": lmm_out_path if "lmm" in cfg.methods else "",
+            "gene_qc_tsv": qc_out_path if "qc" in cfg.methods else "",
         },
-        "runtime_sec": {"meta": float(t_meta), "lmm": float(t_lmm), "qc": float(t_qc)},
-        "meta": {
+        "runtime_sec": runtime,
+    }
+
+    if "meta" in cfg.methods and not meta_df.empty:
+        report["meta"] = {
             "null": _summarize_p(meta_null, alpha=cfg.alpha),
             "signal": _summarize_p(meta_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(meta_join["p_adj"], meta_join["is_signal"], q=cfg.fdr_q),
-        },
-        "lmm_lrt": {
+        }
+    if "lmm" in cfg.methods and not lmm_df.empty:
+        report["lmm_lrt"] = {
             "null": _summarize_p(lrt_null, alpha=cfg.alpha),
             "signal": _summarize_p(lrt_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(lmm_join["lrt_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "lrt_p_adj" in lmm_join.columns else {},
             "lrt_ok_frac": float(np.mean(lmm_join["lrt_ok"].fillna(False).astype(bool))) if "lrt_ok" in lmm_join.columns else np.nan,
-        },
-        "lmm_wald": {
+        }
+        report["lmm_wald"] = {
             "null": _summarize_p(wald_null, alpha=cfg.alpha),
             "signal": _summarize_p(wald_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(lmm_join["wald_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "wald_p_adj" in lmm_join.columns else {},
             "wald_ok_frac": float(np.mean(lmm_join["wald_ok"].fillna(False).astype(bool))) if "wald_ok" in lmm_join.columns else np.nan,
-        },
-    }
+        }
     return report
 
 
@@ -359,6 +377,14 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=123, help="RNG seed.")
     parser.add_argument("--alpha", type=float, default=0.05, help="Alpha for summary metrics.")
     parser.add_argument("--fdr-q", type=float, default=0.1, help="FDR threshold for summary metrics.")
+    parser.add_argument(
+        "--methods",
+        type=str,
+        nargs="+",
+        choices=["meta", "lmm", "qc"],
+        default=["meta", "lmm", "qc"],
+        help="Which gene-level methods to run (default: meta lmm qc).",
+    )
     args = parser.parse_args()
 
     cfg = CountDepthBenchmarkConfig(
@@ -381,6 +407,7 @@ def main() -> None:
         allow_random_slope=bool(args.allow_random_slope),
         min_guides_random_slope=args.min_guides_random_slope,
         max_iter=args.max_iter,
+        methods=tuple([str(m) for m in args.methods]),
         seed=args.seed,
         alpha=args.alpha,
         fdr_q=args.fdr_q,
