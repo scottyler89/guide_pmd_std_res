@@ -210,6 +210,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Golden tests for baseline outputs (byte-for-byte).
 - [x] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
 - [x] Targeted simulation/audit harness (small; not “barrage of versions”) to sanity-check calibration and heterogeneity behavior.
+- [x] Local method-comparison summary script (`scripts/compare_gene_level_methods.py`) for agreement/disagreement triage.
 
 #### P3.9 — Performance / UX
 - [x] Add progress reporting (genes processed, failures, fallbacks).
