@@ -49,6 +49,8 @@ class CountDepthBenchmarkConfig:
     # Construct a PMD-like response from simulated counts.
     pseudocount: float
     response_mode: str
+    pmd_n_boot: int
+    pmd_seed: int
     # Whether to include log-depth as a nuisance covariate in the model matrix.
     include_depth_covariate: bool
     # LMM options (keep small for speed by default).
@@ -83,8 +85,13 @@ class CountDepthBenchmarkConfig:
             raise ValueError("offtarget_slope_sd must be >= 0")
         if self.pseudocount <= 0:
             raise ValueError("pseudocount must be > 0")
-        if self.response_mode not in {"log_counts", "guide_zscore_log_counts"}:
-            raise ValueError("response_mode must be one of: log_counts, guide_zscore_log_counts")
+        if self.response_mode not in {"log_counts", "guide_zscore_log_counts", "pmd_std_res"}:
+            raise ValueError("response_mode must be one of: log_counts, guide_zscore_log_counts, pmd_std_res")
+        if self.response_mode == "pmd_std_res":
+            if int(self.pmd_n_boot) < 2:
+                raise ValueError("pmd_n_boot must be >= 2 (required for valid PMD z-scores)")
+            if int(self.pmd_seed) < 0:
+                raise ValueError("pmd_seed must be >= 0")
         if self.min_guides_random_slope < 2:
             raise ValueError("min_guides_random_slope must be >= 2")
         if self.max_iter <= 0:
@@ -114,6 +121,22 @@ def _simulate_depth_factors(
         depth_counts = rng.poisson(depth * float(depth_poisson_scale)).astype(float)
         depth = np.maximum(depth_counts, 1.0) / float(depth_poisson_scale)
     return depth
+
+
+def _compute_pmd_std_res(counts_df: pd.DataFrame, *, n_boot: int, seed: int) -> pd.DataFrame:
+    from percent_max_diff.percent_max_diff import pmd
+
+    # percent_max_diff uses numpy's global RNG; seed deterministically for reproducibility.
+    state = np.random.get_state()
+    np.random.seed(int(seed))
+    try:
+        pmd_res = pmd(counts_df, num_boot=int(n_boot), skip_posthoc=True)
+    finally:
+        np.random.set_state(state)
+
+    std_res = pmd_res.z_scores
+    std_res = std_res.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return std_res
 
 
 def simulate_counts_and_std_res(
@@ -204,16 +227,19 @@ def simulate_counts_and_std_res(
     counts_df = pd.DataFrame(counts_rows, index=guides, columns=sample_ids)
     annotation_df = pd.DataFrame({"gene_symbol": gene_for_guide}, index=guides)
 
-    log_counts = np.log(counts_df.to_numpy(dtype=float) + float(cfg.pseudocount))
-    if cfg.response_mode == "log_counts":
-        response = log_counts
+    if cfg.response_mode == "pmd_std_res":
+        std_res_df = _compute_pmd_std_res(counts_df, n_boot=int(cfg.pmd_n_boot), seed=int(cfg.pmd_seed))
     else:
-        # Per-guide z-scored log counts (a fast PMD-like surrogate).
-        guide_mean = np.mean(log_counts, axis=1, keepdims=True)
-        guide_sd = np.std(log_counts, axis=1, ddof=1, keepdims=True)
-        guide_sd = np.where(guide_sd <= 0, 1.0, guide_sd)
-        response = (log_counts - guide_mean) / guide_sd
-    std_res_df = pd.DataFrame(response, index=guides, columns=sample_ids)
+        log_counts = np.log(counts_df.to_numpy(dtype=float) + float(cfg.pseudocount))
+        if cfg.response_mode == "log_counts":
+            response = log_counts
+        else:
+            # Per-guide z-scored log counts (a fast PMD-like surrogate).
+            guide_mean = np.mean(log_counts, axis=1, keepdims=True)
+            guide_sd = np.std(log_counts, axis=1, ddof=1, keepdims=True)
+            guide_sd = np.where(guide_sd <= 0, 1.0, guide_sd)
+            response = (log_counts - guide_mean) / guide_sd
+        std_res_df = pd.DataFrame(response, index=guides, columns=sample_ids)
 
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
     if bool(cfg.include_depth_covariate):
@@ -426,9 +452,16 @@ def main() -> None:
     parser.add_argument(
         "--response-mode",
         type=str,
-        choices=["log_counts", "guide_zscore_log_counts"],
+        choices=["log_counts", "guide_zscore_log_counts", "pmd_std_res"],
         default="log_counts",
         help="How to construct the response matrix from simulated counts (default: log_counts).",
+    )
+    parser.add_argument("--pmd-n-boot", type=int, default=100, help="PMD num_boot (only used for response-mode=pmd_std_res).")
+    parser.add_argument(
+        "--pmd-seed",
+        type=int,
+        default=None,
+        help="PMD RNG seed (only used for response-mode=pmd_std_res); defaults to --seed.",
     )
     parser.add_argument("--include-depth-covariate", action="store_true", help="Include log_depth in model matrix as a nuisance covariate.")
     parser.add_argument("--allow-random-slope", action=argparse.BooleanOptionalAction, default=True, help="Allow random slope in LMM (default: True).")
@@ -466,6 +499,8 @@ def main() -> None:
         offtarget_slope_sd=args.offtarget_slope_sd,
         pseudocount=args.pseudocount,
         response_mode=str(args.response_mode),
+        pmd_n_boot=int(args.pmd_n_boot),
+        pmd_seed=int(args.seed if args.pmd_seed is None else args.pmd_seed),
         include_depth_covariate=bool(args.include_depth_covariate),
         allow_random_slope=bool(args.allow_random_slope),
         min_guides_random_slope=args.min_guides_random_slope,

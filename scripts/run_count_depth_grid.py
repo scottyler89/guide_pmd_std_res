@@ -51,10 +51,11 @@ def main() -> None:
     parser.add_argument(
         "--response-mode",
         type=str,
-        choices=["log_counts", "guide_zscore_log_counts"],
+        choices=["log_counts", "guide_zscore_log_counts", "pmd_std_res"],
         default="log_counts",
         help="Response construction mode (default: log_counts).",
     )
+    parser.add_argument("--pmd-n-boot", type=int, default=100, help="PMD num_boot (only used for response-mode=pmd_std_res).")
     parser.add_argument("--methods", type=str, nargs="+", choices=["meta", "lmm", "qc"], default=["meta", "qc"])
     parser.add_argument("--frac-signal", type=float, default=0.0, help="Fraction of signal genes (default: 0; null calibration runs).")
     parser.add_argument("--effect-sd", type=float, default=0.5, help="Effect SD for signal genes (default: 0.5).")
@@ -100,6 +101,8 @@ def main() -> None:
             str(float(args.effect_sd)),
             "--response-mode",
             str(args.response_mode),
+            "--pmd-n-boot",
+            str(int(args.pmd_n_boot)),
             "--methods",
             *[str(m) for m in args.methods],
             "--max-iter",
@@ -150,4 +153,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
