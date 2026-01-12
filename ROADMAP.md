@@ -107,9 +107,12 @@ Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B opti
 - [x] Fit strategy:
   - [x] ML (`reml=False`) for LRT comparability
   - [x] convergence handling + iteration caps + clear diagnostics
+  - [x] Robust optimizer fallback stack to avoid statsmodels `llf=inf` boundary + `Singular matrix` crashes (`lbfgs` → `bfgs` → `cg` → `powell` → `nm`)
 - [x] Inference (Decision E):
   - [x] report LRT and Wald in separate columns (`lrt_*` vs `wald_*`)
   - [x] mark numerical validity explicitly (`lrt_ok`, `wald_ok`)
+  - [x] record raw/adjusted LR stat (`lrt_stat_raw`, `lrt_stat`) + clipping flag (`lrt_clipped`) to diagnose negative LR stats
+  - [x] record optimizer used for each fit (`optimizer_full`, `optimizer_null`)
 - [x] Rubric / fallbacks (Decision C + rubric section of plan doc):
   - [x] if `m_g < 3` -> RI only (configurable via `min_guides_random_slope`)
   - [x] if RI+RS singular/non-convergent -> RI
