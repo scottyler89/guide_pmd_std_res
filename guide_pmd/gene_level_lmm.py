@@ -42,28 +42,58 @@ def _fit_mixedlm(
     exog_re: pd.DataFrame,
     max_iter: int,
 ) -> tuple[sm.regression.mixed_linear_model.MixedLMResults | None, str | None]:
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=ConvergenceWarning)
-            warnings.filterwarnings(
-                "ignore",
-                category=UserWarning,
-                message=r"^Random effects covariance is singular.*",
-            )
-            warnings.filterwarnings(
-                "ignore",
-                category=UserWarning,
-                message=r"^The random effects covariance matrix is singular.*",
-            )
-            model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
-            # NOTE: `lbfgs` can converge to the exact boundary (variance=0) and
-            # produce `llf=inf` in statsmodels, which breaks LRT computation.
-            # Empirically, `bfgs` avoids this failure mode on our synthetic and
-            # real-data audit runs.
-            res = model.fit(reml=False, method="bfgs", maxiter=max_iter, disp=False)
-    except Exception as exc:
-        return None, str(exc)
-    return res, None
+    errors: list[str] = []
+    best: sm.regression.mixed_linear_model.MixedLMResults | None = None
+    best_method: str | None = None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=ConvergenceWarning)
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message=r"^Random effects covariance is singular.*",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message=r"^The random effects covariance matrix is singular.*",
+        )
+
+        model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
+
+        # Deterministic method order:
+        # - `lbfgs` is typically fast and convergent.
+        # - `bfgs`/`cg` are used when `lbfgs` converges to an `llf=inf` boundary
+        #   (variance=0) in statsmodels, which breaks LRT computation.
+        for method in ("lbfgs", "bfgs", "cg"):
+            try:
+                res = model.fit(reml=False, method=method, maxiter=max_iter, disp=False)
+            except Exception as exc:
+                errors.append(f"{method}: {exc}")
+                continue
+
+            setattr(res, "_guide_pmd_optimizer", method)
+
+            converged = bool(getattr(res, "converged", False))
+            llf = float(getattr(res, "llf", np.nan))
+            llf_finite = bool(np.isfinite(llf))
+
+            if converged and llf_finite:
+                return res, None
+
+            if converged and best is None:
+                best = res
+                best_method = method
+
+            reason = "non-converged" if not converged else "llf_nonfinite"
+            errors.append(f"{method}: {reason}")
+
+    if best is not None:
+        # Preserve a converged fit (e.g., for Wald inference), even if llf is non-finite.
+        setattr(best, "_guide_pmd_optimizer", str(best_method or ""))
+        return best, None
+
+    return None, "; ".join(errors) if errors else "mixedlm fit failed"
 
 
 def _extract_re_sds(result: sm.regression.mixed_linear_model.MixedLMResults, *, random_slope: bool) -> tuple[float, float]:
@@ -247,6 +277,8 @@ def compute_gene_lmm(
                     return {
                         "ok": False,
                         "model": model_name,
+                        "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else "",
+                        "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", "") if null_res is not None else "",
                         "full_res": full_res,
                         "null_res": null_res,
                         "converged_full": converged_full,
@@ -273,6 +305,8 @@ def compute_gene_lmm(
                 return {
                     "ok": True,
                     "model": model_name,
+                    "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", ""),
+                    "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", ""),
                     "theta": theta,
                     "se_theta": se_theta,
                     "wald_z": wald_z,
@@ -310,6 +344,8 @@ def compute_gene_lmm(
                         "focal_var": focal_var,
                         "method": "lmm",
                         "model": res["model"],
+                        "optimizer_full": res.get("optimizer_full", ""),
+                        "optimizer_null": res.get("optimizer_null", ""),
                         "theta": res["theta"],
                         "se_theta": res["se_theta"],
                         "wald_z": res["wald_z"],
@@ -349,6 +385,8 @@ def compute_gene_lmm(
                             "focal_var": focal_var,
                             "method": "meta_fallback",
                             "model": res["model"],
+                            "optimizer_full": res.get("optimizer_full", ""),
+                            "optimizer_null": res.get("optimizer_null", ""),
                             "theta": theta,
                             "se_theta": se_theta,
                             "wald_z": z,
@@ -380,6 +418,8 @@ def compute_gene_lmm(
                     "focal_var": focal_var,
                     "method": "failed",
                     "model": res["model"],
+                    "optimizer_full": res.get("optimizer_full", ""),
+                    "optimizer_null": res.get("optimizer_null", ""),
                     "theta": np.nan,
                     "se_theta": np.nan,
                     "wald_z": np.nan,
@@ -409,6 +449,8 @@ def compute_gene_lmm(
         "focal_var",
         "method",
         "model",
+        "optimizer_full",
+        "optimizer_null",
         "theta",
         "se_theta",
         "wald_z",
