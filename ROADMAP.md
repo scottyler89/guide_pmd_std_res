@@ -221,3 +221,35 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
 - [x] Update `README.md` with gene-level usage examples.
 - [ ] Version + changelog entry + tag once add-on ships.
+
+---
+
+### P4 — Ground-Truth Benchmarks (Count Depth + Confounding)
+
+#### P4.1 — Poisson Count-Depth Simulator (ground truth)
+Goal: create a statistically grounded benchmark harness that simulates **Poisson counts** with **sample-depth variation**
+(including depth confounded with treatment), then evaluates downstream gene-level methods against known truth.
+
+Phase A — Minimal benchmark harness (deterministic; local)
+- [x] Add `scripts/benchmark_count_depth.py`:
+  - [x] simulate per-guide counts with per-sample depth factors (log-normal) + optional Poisson noise layer on depths
+  - [x] allow treatment-confounded depth via `treatment_depth_multiplier`
+  - [x] store truth (`theta_true`, `is_signal`) and inputs/outputs in an output directory
+- [x] Support fast response construction modes (no PMD bootstrap):
+  - [x] `log_counts`
+  - [x] `guide_zscore_log_counts`
+- [x] Run Plan B / Plan A / Plan C **directly** on the simulated response matrix:
+  - [x] write `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`
+  - [x] write a machine-readable `benchmark_report.json` with runtime + null/signal summaries + simple FDR/TPR at a chosen q
+
+Phase B — Statistical realism upgrades (explicit configs; no silent heuristics)
+- [ ] Add optional batch covariate(s) and explicit confounding patterns (depth ↔ treatment ↔ batch) to stress identifiability.
+- [ ] Add optional “bad guide” contamination process (mixture on guide effects) to stress robustness methods.
+- [ ] Add optional non-Gaussian noise/heteroskedasticity modes and document which downstream tests remain calibrated.
+
+Phase C — Performance benchmark grid + reporting
+- [ ] Add a small grid runner (sizes, depth variation, effect size) that writes a tidy TSV/JSON for plotting.
+- [ ] Add summary figures (runtime vs size; null p-value calibration; power vs effect size) under a benchmark output directory.
+
+Phase D — Tie benchmark back to selection policy
+- [ ] Evaluate Plan A selection policy tradeoffs (power vs runtime) on the benchmark grid (explicitly record selection settings).
