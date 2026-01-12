@@ -61,6 +61,7 @@ class CountDepthBenchmarkConfig:
     seed: int
     alpha: float
     fdr_q: float
+    qq_plots: bool
 
     def validate(self) -> None:
         if self.n_genes <= 0:
@@ -137,6 +138,44 @@ def _compute_pmd_std_res(counts_df: pd.DataFrame, *, n_boot: int, seed: int) -> 
     std_res = pmd_res.z_scores
     std_res = std_res.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return std_res
+
+
+def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | int | None]:
+    called = np.asarray(called, dtype=bool)
+    is_signal = np.asarray(is_signal, dtype=bool)
+    if called.shape != is_signal.shape:
+        raise ValueError("called and is_signal must have the same shape")
+
+    n_total = int(is_signal.size)
+    n_signal = int(np.sum(is_signal))
+    n_null = int(n_total - n_signal)
+
+    tp = int(np.sum(called & is_signal))
+    fp = int(np.sum(called & ~is_signal))
+    tn = int(np.sum(~called & ~is_signal))
+    fn = int(np.sum(~called & is_signal))
+
+    n_called = int(tp + fp)
+
+    tpr = (tp / n_signal) if n_signal else None
+    fpr = (fp / n_null) if n_null else None
+    fdr = (fp / n_called) if n_called else None
+    ppv = (tp / n_called) if n_called else None
+
+    return {
+        "n_total": n_total,
+        "n_signal": n_signal,
+        "n_null": n_null,
+        "n_called": n_called,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "tpr": tpr,
+        "fpr": fpr,
+        "fdr": fdr,
+        "ppv": ppv,
+    }
 
 
 def simulate_counts_and_std_res(
@@ -301,6 +340,55 @@ def _fdr_summary(p_adj: pd.Series, is_signal: pd.Series, *, q: float) -> dict[st
     }
 
 
+def _write_qq_plot(p: pd.Series, *, out_path: str, title: str) -> dict[str, float | int | None]:
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    from scipy.stats import chi2
+
+    p_arr = p.to_numpy(dtype=float)
+    mask = np.isfinite(p_arr) & (p_arr > 0.0) & (p_arr <= 1.0)
+    p_arr = p_arr[mask]
+    n = int(p_arr.size)
+    if n == 0:
+        return {"n": 0, "lambda_gc": None}
+
+    p_sorted = np.sort(np.clip(p_arr, np.finfo(float).tiny, 1.0))
+    expected = (np.arange(1, n + 1, dtype=float) - 0.5) / float(n)
+
+    x = -np.log10(expected)
+    y = -np.log10(p_sorted)
+
+    max_v = float(max(np.max(x), np.max(y))) if n else 1.0
+
+    fig, ax = plt.subplots(figsize=(4, 4), dpi=150)
+    ax.scatter(x, y, s=8, alpha=0.6, edgecolors="none")
+    ax.plot([0.0, max_v], [0.0, max_v], color="black", lw=1)
+    ax.set_xlabel("Expected -log10(p)")
+    ax.set_ylabel("Observed -log10(p)")
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+    chi = chi2.isf(p_arr, 1)
+    lambda_gc = float(np.median(chi) / float(chi2.ppf(0.5, 1)))
+    return {"n": n, "lambda_gc": lambda_gc}
+
+
+def _json_sanitize(obj: object) -> object:
+    if isinstance(obj, dict):
+        return {str(k): _json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_sanitize(v) for v in obj]
+    if isinstance(obj, float):
+        if not np.isfinite(obj):
+            return None
+        return obj
+    return obj
+
+
 def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, object]:
     cfg.validate()
     os.makedirs(out_dir, exist_ok=True)
@@ -408,24 +496,67 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     }
 
     if "meta" in cfg.methods and not meta_df.empty:
+        meta_called_alpha = np.isfinite(meta_join["p"].to_numpy(dtype=float)) & (meta_join["p"].to_numpy(dtype=float) < float(cfg.alpha))
+        meta_called_q = np.isfinite(meta_join["p_adj"].to_numpy(dtype=float)) & (meta_join["p_adj"].to_numpy(dtype=float) < float(cfg.fdr_q))
         report["meta"] = {
             "null": _summarize_p(meta_null, alpha=cfg.alpha),
             "signal": _summarize_p(meta_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(meta_join["p_adj"], meta_join["is_signal"], q=cfg.fdr_q),
+            "confusion_alpha": _confusion(meta_called_alpha, meta_join["is_signal"].to_numpy(dtype=bool)),
+            "confusion_fdr_q": _confusion(meta_called_q, meta_join["is_signal"].to_numpy(dtype=bool)),
         }
     if "lmm" in cfg.methods and not lmm_df.empty:
+        lrt_p_arr = lrt_p.to_numpy(dtype=float) if not lrt_p.empty else np.asarray([], dtype=float)
+        wald_p_arr = wald_p.to_numpy(dtype=float) if not wald_p.empty else np.asarray([], dtype=float)
+        lrt_p_adj_arr = lmm_join["lrt_p_adj"].to_numpy(dtype=float) if "lrt_p_adj" in lmm_join.columns else np.asarray([], dtype=float)
+        wald_p_adj_arr = lmm_join["wald_p_adj"].to_numpy(dtype=float) if "wald_p_adj" in lmm_join.columns else np.asarray([], dtype=float)
+        is_signal_arr = lmm_join["is_signal"].to_numpy(dtype=bool)
+
+        lrt_called_alpha = np.isfinite(lrt_p_arr) & (lrt_p_arr < float(cfg.alpha))
+        wald_called_alpha = np.isfinite(wald_p_arr) & (wald_p_arr < float(cfg.alpha))
+        lrt_called_q = np.isfinite(lrt_p_adj_arr) & (lrt_p_adj_arr < float(cfg.fdr_q)) if lrt_p_adj_arr.size else np.zeros_like(is_signal_arr, dtype=bool)
+        wald_called_q = (
+            np.isfinite(wald_p_adj_arr) & (wald_p_adj_arr < float(cfg.fdr_q)) if wald_p_adj_arr.size else np.zeros_like(is_signal_arr, dtype=bool)
+        )
+
         report["lmm_lrt"] = {
             "null": _summarize_p(lrt_null, alpha=cfg.alpha),
             "signal": _summarize_p(lrt_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(lmm_join["lrt_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "lrt_p_adj" in lmm_join.columns else {},
             "lrt_ok_frac": float(np.mean(lmm_join["lrt_ok"].fillna(False).astype(bool))) if "lrt_ok" in lmm_join.columns else np.nan,
+            "confusion_alpha": _confusion(lrt_called_alpha, is_signal_arr),
+            "confusion_fdr_q": _confusion(lrt_called_q, is_signal_arr),
         }
         report["lmm_wald"] = {
             "null": _summarize_p(wald_null, alpha=cfg.alpha),
             "signal": _summarize_p(wald_sig, alpha=cfg.alpha),
             "fdr": _fdr_summary(lmm_join["wald_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "wald_p_adj" in lmm_join.columns else {},
             "wald_ok_frac": float(np.mean(lmm_join["wald_ok"].fillna(False).astype(bool))) if "wald_ok" in lmm_join.columns else np.nan,
+            "confusion_alpha": _confusion(wald_called_alpha, is_signal_arr),
+            "confusion_fdr_q": _confusion(wald_called_q, is_signal_arr),
         }
+
+    if bool(cfg.qq_plots):
+        fig_dir = os.path.join(out_dir, "figures")
+        os.makedirs(fig_dir, exist_ok=True)
+
+        qq_outputs: dict[str, object] = {}
+        if "meta" in cfg.methods and not meta_df.empty:
+            out_path = os.path.join(fig_dir, "qq_meta_p_null.png")
+            qq_outputs["meta_p_null_png"] = out_path
+            report.setdefault("qq", {})["meta_p_null"] = _write_qq_plot(meta_null, out_path=out_path, title="Meta p (null)")
+        if "lmm" in cfg.methods and not lmm_df.empty and "lrt_p" in lmm_join.columns:
+            out_path = os.path.join(fig_dir, "qq_lmm_lrt_p_null.png")
+            qq_outputs["lmm_lrt_p_null_png"] = out_path
+            report.setdefault("qq", {})["lmm_lrt_p_null"] = _write_qq_plot(lrt_null, out_path=out_path, title="LMM LRT p (null)")
+        if "lmm" in cfg.methods and not lmm_df.empty and "wald_p" in lmm_join.columns:
+            out_path = os.path.join(fig_dir, "qq_lmm_wald_p_null.png")
+            qq_outputs["lmm_wald_p_null_png"] = out_path
+            report.setdefault("qq", {})["lmm_wald_p_null"] = _write_qq_plot(wald_null, out_path=out_path, title="LMM Wald p (null)")
+
+        report["outputs"]["figures_dir"] = fig_dir
+        report["outputs"].update(qq_outputs)
+
     return report
 
 
@@ -471,6 +602,12 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=0.05, help="Alpha for summary metrics.")
     parser.add_argument("--fdr-q", type=float, default=0.1, help="FDR threshold for summary metrics.")
     parser.add_argument(
+        "--qq-plots",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write QQ plots for null p-values (default: enabled; requires matplotlib).",
+    )
+    parser.add_argument(
         "--methods",
         type=str,
         nargs="+",
@@ -509,12 +646,13 @@ def main() -> None:
         seed=args.seed,
         alpha=args.alpha,
         fdr_q=args.fdr_q,
+        qq_plots=bool(args.qq_plots),
     )
 
     report = run_benchmark(cfg, args.out_dir)
     report_path = os.path.join(args.out_dir, "benchmark_report.json")
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, sort_keys=True)
+        json.dump(_json_sanitize(report), f, indent=2, sort_keys=True, allow_nan=False)
     print(report_path)
 
 
