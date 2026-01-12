@@ -235,20 +235,38 @@ Phase A — Minimal benchmark harness (deterministic; local)
   - [x] simulate per-guide counts with per-sample depth factors (log-normal) + optional Poisson noise layer on depths
   - [x] allow treatment-confounded depth via `treatment_depth_multiplier`
   - [x] store truth (`theta_true`, `is_signal`) and inputs/outputs in an output directory
+- [x] Ensure the null is *actually null* by default:
+  - [x] apply on-target guide slope heterogeneity only for signal genes (no accidental signal leakage in `frac_signal=0` runs)
+  - [x] add gene→guide hierarchy for baseline lambda (`log_lambda_gene + Normal(0, guide_lambda_log_sd)`)
+  - [x] write `sim_truth_guide.tsv` for guide-level ground truth diagnostics
 - [x] Support fast response construction modes (no PMD bootstrap):
   - [x] `log_counts`
   - [x] `guide_zscore_log_counts`
+- [x] Support a full PMD response mode (small simulations only):
+  - [x] `pmd_std_res` with `--pmd-n-boot` and deterministic `--pmd-seed`
 - [x] Run Plan B / Plan A / Plan C **directly** on the simulated response matrix:
   - [x] write `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`
-  - [x] write a machine-readable `benchmark_report.json` with runtime + null/signal summaries + simple FDR/TPR at a chosen q
+  - [x] write a strict machine-readable `benchmark_report.json` (valid JSON; no `NaN`) with:
+    - [x] runtime summaries
+    - [x] confusion matrices at `p < alpha` and `p_adj < q` (TP/FP/TN/FN, FDR/TPR/FPR)
+    - [x] null calibration summaries
+    - [x] QQ stats (`lambda_gc`) and optional QQ plot PNGs
 
 Phase B — Statistical realism upgrades (explicit configs; no silent heuristics)
 - [ ] Add optional batch covariate(s) and explicit confounding patterns (depth ↔ treatment ↔ batch) to stress identifiability.
-- [ ] Add optional “bad guide” contamination process (mixture on guide effects) to stress robustness methods.
+- [x] Add optional “bad guide” contamination process (off-target mixture on guide effects) to stress robustness methods.
 - [ ] Add optional non-Gaussian noise/heteroskedasticity modes and document which downstream tests remain calibrated.
 
 Phase C — Performance benchmark grid + reporting
 - [x] Add a small grid runner that shells out to `scripts/benchmark_count_depth.py` and writes `count_depth_grid_summary.tsv` (`scripts/run_count_depth_grid.py`).
+- [x] Expand the grid runner to sweep key realism knobs:
+  - [x] gene-level lambda heterogeneity (`gene_lambda_log_sd`)
+  - [x] within-gene guide lambda heterogeneity (`guide_lambda_log_sd`)
+  - [x] guide slope heterogeneity (`guide_slope_sd`)
+  - [x] off-target fraction + magnitude (`offtarget_*`)
+  - [x] depth variation + treatment depth confounding (`depth_log_sd`, `treatment_depth_multiplier`)
+  - [x] optional depth covariate inclusion (`--include-depth-covariate`)
+- [x] Capture calibration + confusion-matrix summaries in `count_depth_grid_summary.tsv` (incl. `lambda_gc`, FP/FPR, runtime).
 - [ ] Add summary figures (runtime vs size; null p-value calibration; power vs effect size) under a benchmark output directory.
 
 Phase D — Tie benchmark back to selection policy
