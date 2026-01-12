@@ -56,7 +56,11 @@ def _fit_mixedlm(
                 message=r"^The random effects covariance matrix is singular.*",
             )
             model = sm.MixedLM(endog, exog, groups=groups, exog_re=exog_re)
-            res = model.fit(reml=False, method="lbfgs", maxiter=max_iter, disp=False)
+            # NOTE: `lbfgs` can converge to the exact boundary (variance=0) and
+            # produce `llf=inf` in statsmodels, which breaks LRT computation.
+            # Empirically, `bfgs` avoids this failure mode on our synthetic and
+            # real-data audit runs.
+            res = model.fit(reml=False, method="bfgs", maxiter=max_iter, disp=False)
     except Exception as exc:
         return None, str(exc)
     return res, None
@@ -255,10 +259,15 @@ def compute_gene_lmm(
                 wald_z = float(theta / se_theta) if (np.isfinite(theta) and np.isfinite(se_theta) and se_theta > 0) else np.nan
                 wald_p = float(2 * norm.sf(abs(wald_z))) if np.isfinite(wald_z) else np.nan
 
-                ll_full = float(full_res.model.loglike(full_res.params))
-                ll_null = float(null_res.model.loglike(null_res.params))
-                lr = float(2.0 * (ll_full - ll_null)) if (np.isfinite(ll_full) and np.isfinite(ll_null)) else np.nan
-                lrt_p = float(chi2.sf(lr, df=1)) if (np.isfinite(lr) and lr >= 0.0) else np.nan
+                ll_full = float(getattr(full_res, "llf", np.nan))
+                ll_null = float(getattr(null_res, "llf", np.nan))
+                lr_raw = float(2.0 * (ll_full - ll_null)) if (np.isfinite(ll_full) and np.isfinite(ll_null)) else np.nan
+                lr = lr_raw
+                lrt_clipped = False
+                if np.isfinite(lr_raw) and lr_raw < 0.0:
+                    lr = 0.0
+                    lrt_clipped = True
+                lrt_p = float(chi2.sf(lr, df=1)) if np.isfinite(lr) else np.nan
 
                 sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
                 return {
@@ -269,8 +278,10 @@ def compute_gene_lmm(
                     "wald_z": wald_z,
                     "wald_p": wald_p,
                     "lrt_stat": lr,
+                    "lrt_stat_raw": lr_raw,
                     "lrt_p": lrt_p,
                     "lrt_ok": bool(np.isfinite(lrt_p)),
+                    "lrt_clipped": bool(lrt_clipped),
                     "sigma_alpha": sigma_alpha,
                     "tau": tau,
                     "converged_full": converged_full,
@@ -306,9 +317,11 @@ def compute_gene_lmm(
                         "wald_ok": wald_ok,
                         "wald_p_adj": np.nan,
                         "lrt_stat": res["lrt_stat"],
+                        "lrt_stat_raw": res["lrt_stat_raw"],
                         "lrt_p": res["lrt_p"],
                         "lrt_ok": lrt_ok,
                         "lrt_p_adj": np.nan,
+                        "lrt_clipped": bool(res.get("lrt_clipped", False)),
                         "sigma_alpha": res["sigma_alpha"],
                         "tau": res["tau"],
                         "converged_full": res["converged_full"],
@@ -343,9 +356,11 @@ def compute_gene_lmm(
                             "wald_ok": bool(np.isfinite(p)),
                             "wald_p_adj": np.nan,
                             "lrt_stat": np.nan,
+                            "lrt_stat_raw": np.nan,
                             "lrt_p": np.nan,
                             "lrt_ok": False,
                             "lrt_p_adj": np.nan,
+                            "lrt_clipped": False,
                             "sigma_alpha": np.nan,
                             "tau": float(meta_row["tau"]),
                             "converged_full": False,
@@ -372,9 +387,11 @@ def compute_gene_lmm(
                     "wald_ok": False,
                     "wald_p_adj": np.nan,
                     "lrt_stat": np.nan,
+                    "lrt_stat_raw": np.nan,
                     "lrt_p": np.nan,
                     "lrt_ok": False,
                     "lrt_p_adj": np.nan,
+                    "lrt_clipped": False,
                     "sigma_alpha": np.nan,
                     "tau": np.nan,
                     "converged_full": bool(res.get("converged_full", False)),
@@ -399,9 +416,11 @@ def compute_gene_lmm(
         "wald_ok",
         "wald_p_adj",
         "lrt_stat",
+        "lrt_stat_raw",
         "lrt_p",
         "lrt_ok",
         "lrt_p_adj",
+        "lrt_clipped",
         "sigma_alpha",
         "tau",
         "converged_full",
