@@ -63,9 +63,11 @@ def _fit_mixedlm(
 
         # Deterministic method order:
         # - `lbfgs` is typically fast and convergent.
-        # - `bfgs`/`cg` are used when `lbfgs` converges to an `llf=inf` boundary
+        # - `bfgs`/`cg` are used when `lbfgs` hits an `llf=inf` boundary
         #   (variance=0) in statsmodels, which breaks LRT computation.
-        for method in ("lbfgs", "bfgs", "cg"):
+        # - `powell`/`nm` (Nelder–Mead) are slow but can converge in cases where
+        #   gradient-based optimizers fail or raise `Singular matrix`.
+        for method in ("lbfgs", "bfgs", "cg", "powell", "nm"):
             try:
                 res = model.fit(reml=False, method=method, maxiter=max_iter, disp=False)
             except Exception as exc:
