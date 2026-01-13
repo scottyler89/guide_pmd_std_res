@@ -289,9 +289,12 @@ def main() -> None:
             row["meta_null_lambda_gc"] = qq.get("meta_p_null", {}).get("lambda_gc")
             row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
             row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
+            row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
+            row["meta_alpha_fdr"] = report["meta"]["confusion_alpha"]["fdr"]
             row["meta_alpha_n_called"] = report["meta"]["confusion_alpha"]["n_called"]
             row["meta_q_fp"] = report["meta"]["confusion_fdr_q"]["fp"]
             row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
+            row["meta_q_tpr"] = report["meta"]["confusion_fdr_q"]["tpr"]
             row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
         if "lmm_lrt" in report:
             row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
@@ -300,8 +303,11 @@ def main() -> None:
             row["lmm_lrt_null_lambda_gc"] = qq.get("lmm_lrt_p_null", {}).get("lambda_gc")
             row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
             row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
+            row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
+            row["lmm_lrt_alpha_fdr"] = report["lmm_lrt"]["confusion_alpha"]["fdr"]
             row["lmm_lrt_q_fp"] = report["lmm_lrt"]["confusion_fdr_q"]["fp"]
             row["lmm_lrt_q_fdr"] = report["lmm_lrt"]["confusion_fdr_q"]["fdr"]
+            row["lmm_lrt_q_tpr"] = report["lmm_lrt"]["confusion_fdr_q"]["tpr"]
         if "lmm_wald" in report:
             row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
             row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
@@ -309,8 +315,11 @@ def main() -> None:
             row["lmm_wald_null_lambda_gc"] = qq.get("lmm_wald_p_null", {}).get("lambda_gc")
             row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
             row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
+            row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
+            row["lmm_wald_alpha_fdr"] = report["lmm_wald"]["confusion_alpha"]["fdr"]
             row["lmm_wald_q_fp"] = report["lmm_wald"]["confusion_fdr_q"]["fp"]
             row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
+            row["lmm_wald_q_tpr"] = report["lmm_wald"]["confusion_fdr_q"]["tpr"]
 
         rows.append(row)
 
