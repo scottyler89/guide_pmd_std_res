@@ -51,5 +51,11 @@ def test_baseline_outputs_match_golden(tmp_path, monkeypatch):
     gene_level_dir = out_dir / "gene_level"
     assert gene_level_dir.is_dir()
     assert (gene_level_dir / "PMD_std_res_gene_meta.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm_selection.tsv").is_file()
     assert (gene_level_dir / "PMD_std_res_gene_lmm.tsv").is_file()
     assert (gene_level_dir / "PMD_std_res_gene_qc.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_flagged.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_mixture.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_mixture_guides.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_tmeta.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_tmeta_guides.tsv").is_file()
