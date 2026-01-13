@@ -253,9 +253,11 @@ Phase A — Minimal benchmark harness (deterministic; local)
     - [x] QQ stats (`lambda_gc`) and optional QQ plot PNGs
 
 Phase B — Statistical realism upgrades (explicit configs; no silent heuristics)
-- [ ] Add optional batch covariate(s) and explicit confounding patterns (depth ↔ treatment ↔ batch) to stress identifiability.
+- [x] Add optional batch covariate(s) and explicit confounding patterns (depth ↔ treatment ↔ batch) to stress identifiability.
 - [x] Add optional “bad guide” contamination process (off-target mixture on guide effects) to stress robustness methods.
 - [ ] Add optional non-Gaussian noise/heteroskedasticity modes and document which downstream tests remain calibrated.
+  - [x] Implement NB-style overdispersion via a Gamma-Poisson mixture (`nb_overdispersion`).
+  - [ ] Document calibration expectations (what stays uniform under null) for each response mode + confounding pattern.
 
 Phase C — Performance benchmark grid + reporting
 - [x] Add a small grid runner that shells out to `scripts/benchmark_count_depth.py` and writes `count_depth_grid_summary.tsv` (`scripts/run_count_depth_grid.py`).
@@ -267,7 +269,7 @@ Phase C — Performance benchmark grid + reporting
   - [x] depth variation + treatment depth confounding (`depth_log_sd`, `treatment_depth_multiplier`)
   - [x] optional depth covariate inclusion (`--include-depth-covariate`)
 - [x] Capture calibration + confusion-matrix summaries in `count_depth_grid_summary.tsv` (incl. `lambda_gc`, FP/FPR, runtime).
-- [ ] Add summary figures (runtime vs size; null p-value calibration; power vs effect size) under a benchmark output directory.
+- [x] Add summary figures (runtime vs size; null p-value calibration; power vs effect size) under a benchmark output directory.
 
 Phase D — Tie benchmark back to selection policy
 - [ ] Evaluate Plan A selection policy tradeoffs (power vs runtime) on the benchmark grid (explicitly record selection settings).

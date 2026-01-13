@@ -6,5 +6,6 @@ Guide PMD Standardized Residuals
 
    api
    gene_level
+   benchmark_count_depth
 
 This package implements PMD standardized residuals and downstream statistics.

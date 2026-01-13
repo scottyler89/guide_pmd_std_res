@@ -109,6 +109,7 @@ def main() -> None:
 
     x_tdm = "treatment_depth_multiplier" if "treatment_depth_multiplier" in df.columns else None
     x_esd = "effect_sd" if "effect_sd" in df.columns else None
+    x_ngenes = "n_genes" if "n_genes" in df.columns else None
 
     plots_made = 0
 
@@ -154,6 +155,20 @@ def main() -> None:
                     hline=None,
                 )
                 plots_made += 1
+
+    # Simple runtime scaling plots (when present).
+    for runtime_col in ["runtime_meta", "runtime_lmm", "runtime_qc"]:
+        if runtime_col in df.columns and x_ngenes is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=runtime_col,
+                x_col=x_ngenes,
+                out_path=os.path.join(args.out_dir, f"runtime__{runtime_col}.png"),
+                title=f"Runtime — {runtime_col}",
+                y_label="seconds",
+                hline=None,
+            )
+            plots_made += 1
 
     if plots_made == 0:
         raise ValueError("no plots were generated (missing expected columns in the grid TSV)")
