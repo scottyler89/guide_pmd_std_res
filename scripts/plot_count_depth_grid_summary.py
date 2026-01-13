@@ -95,6 +95,54 @@ def _plot_metric_grid(
     plt.close(fig)
 
 
+def _plot_selection_tradeoff(
+    df: pd.DataFrame,
+    *,
+    metric_col: str,
+    out_path: str,
+    title: str,
+    y_label: str,
+) -> None:
+    plt = _require_matplotlib()
+
+    required = {"lmm_scope", "lmm_audit_n", "lmm_max_genes_per_focal_var"}
+    missing = required.difference(set(df.columns))
+    if missing:
+        raise ValueError(f"missing required column(s) for selection tradeoff plot: {sorted(missing)}")
+    if metric_col not in df.columns:
+        raise ValueError(f"missing metric column: {metric_col}")
+
+    sub = df.copy()
+    sub["cap"] = pd.to_numeric(sub["lmm_max_genes_per_focal_var"], errors="coerce").fillna(0).astype(int)
+    sub["lmm_scope"] = sub["lmm_scope"].astype(str)
+    sub["lmm_audit_n"] = pd.to_numeric(sub["lmm_audit_n"], errors="coerce").fillna(0).astype(int)
+
+    sub[metric_col] = pd.to_numeric(sub[metric_col], errors="coerce")
+    sub = sub.loc[sub[metric_col].notna()].copy()
+    if sub.empty:
+        raise ValueError(f"no finite values for metric: {metric_col}")
+
+    agg = (
+        sub.groupby(["lmm_scope", "lmm_audit_n", "cap"], dropna=False)[metric_col]
+        .mean()
+        .reset_index()
+        .sort_values(["lmm_scope", "lmm_audit_n", "cap"])
+    )
+
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+    for (scope, audit_n), g in agg.groupby(["lmm_scope", "lmm_audit_n"], sort=True):
+        label = f"{scope}, audit_n={int(audit_n)}"
+        ax.plot(g["cap"], g[metric_col], marker="o", lw=1, label=label)
+
+    ax.set_xlabel("cap (0 = None/unlimited)")
+    ax.set_ylabel(y_label)
+    ax.set_title(title)
+    ax.legend(fontsize=8, frameon=False)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot summary figures from count_depth_grid_summary.tsv.")
     parser.add_argument("--grid-tsv", required=True, type=str, help="Path to count_depth_grid_summary.tsv.")
@@ -154,7 +202,7 @@ def main() -> None:
                     y_label="TPR",
                     hline=None,
                 )
-                plots_made += 1
+            plots_made += 1
 
     # Simple runtime scaling plots (when present).
     for runtime_col in ["runtime_meta", "runtime_lmm", "runtime_qc"]:
@@ -167,6 +215,40 @@ def main() -> None:
                 title=f"Runtime — {runtime_col}",
                 y_label="seconds",
                 hline=None,
+            )
+            plots_made += 1
+
+    # LMM selection tradeoffs (cap/scope/audit_n) when present.
+    if {"lmm_scope", "lmm_audit_n", "lmm_max_genes_per_focal_var"}.issubset(set(df.columns)):
+        if "runtime_lmm" in df.columns:
+            _plot_selection_tradeoff(
+                df,
+                metric_col="runtime_lmm",
+                out_path=os.path.join(args.out_dir, "selection_runtime_lmm_vs_cap.png"),
+                title="LMM runtime vs selection cap",
+                y_label="seconds",
+            )
+            plots_made += 1
+
+        sig_rows = df.loc[df.get("frac_signal", 0.0) > 0.0].copy()
+        if (not sig_rows.empty) and ("lmm_lrt_q_tpr" in sig_rows.columns):
+            _plot_selection_tradeoff(
+                sig_rows,
+                metric_col="lmm_lrt_q_tpr",
+                out_path=os.path.join(args.out_dir, "selection_power_lmm_lrt_q_tpr_vs_cap.png"),
+                title="Selection tradeoff: LMM LRT power (TPR at FDR q) vs cap",
+                y_label="TPR",
+            )
+            plots_made += 1
+
+        null_rows = df.loc[df.get("frac_signal", 0.0) == 0.0].copy()
+        if (not null_rows.empty) and ("lmm_lrt_alpha_fpr" in null_rows.columns):
+            _plot_selection_tradeoff(
+                null_rows,
+                metric_col="lmm_lrt_alpha_fpr",
+                out_path=os.path.join(args.out_dir, "selection_null_lmm_lrt_alpha_fpr_vs_cap.png"),
+                title="Selection tradeoff: LMM LRT null FPR at alpha vs cap",
+                y_label="FPR",
             )
             plots_made += 1
 
