@@ -139,3 +139,33 @@ def test_compute_gene_lmm_falls_back_from_random_slope_to_ri(monkeypatch):
 
     assert out["method"].tolist() == ["lmm", "lmm"]
     assert out["model"].tolist() == ["ri", "ri"]
+
+
+def test_compute_gene_lmm_parallel_matches_serial():
+    response, ann, mm = _make_synthetic()
+    out_serial = glmm.compute_gene_lmm(
+        response,
+        ann,
+        mm,
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        add_intercept=True,
+        allow_random_slope=False,
+        fallback_to_meta=False,
+        max_iter=200,
+        n_jobs=1,
+    )
+    out_parallel = glmm.compute_gene_lmm(
+        response,
+        ann,
+        mm,
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        add_intercept=True,
+        allow_random_slope=False,
+        fallback_to_meta=False,
+        max_iter=200,
+        n_jobs=2,
+    )
+
+    pd.testing.assert_frame_equal(out_serial, out_parallel, check_exact=False, rtol=1e-12, atol=1e-12)

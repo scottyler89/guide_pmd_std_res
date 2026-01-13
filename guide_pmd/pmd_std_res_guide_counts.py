@@ -245,7 +245,8 @@ def pmd_std_res_and_stats(input_file,
                             gene_lmm_audit_n: int = 50,
                             gene_lmm_audit_seed: int = 123456,
                             gene_lmm_max_genes_per_focal_var: int | None = None,
-                            gene_lmm_explicit_genes: list[str] | None = None):
+                            gene_lmm_explicit_genes: list[str] | None = None,
+                            gene_lmm_jobs: int = 1):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -444,6 +445,8 @@ def pmd_std_res_and_stats(input_file,
                     add_intercept=gene_add_intercept,
                     meta_results=gene_meta,
                     selection_table=gene_lmm_selection,
+                    n_jobs=int(gene_lmm_jobs),
+                    progress=bool(gene_progress),
                 )
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
@@ -753,6 +756,13 @@ def main():
         default=None,
         help="Gene id(s) to fit with Plan A when --gene-lmm-scope=explicit.",
     )
+    parser.add_argument(
+        "--gene-lmm-jobs",
+        dest="gene_lmm_jobs",
+        type=int,
+        default=1,
+        help="Parallel worker threads for Plan A LMM (default: 1).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -781,7 +791,8 @@ def main():
                           gene_lmm_audit_n=args.gene_lmm_audit_n,
                           gene_lmm_audit_seed=args.gene_lmm_audit_seed,
                           gene_lmm_max_genes_per_focal_var=args.gene_lmm_max_genes_per_focal_var,
-                          gene_lmm_explicit_genes=args.gene_lmm_explicit_genes)
+                          gene_lmm_explicit_genes=args.gene_lmm_explicit_genes,
+                          gene_lmm_jobs=args.gene_lmm_jobs)
 
 
 

@@ -216,7 +216,8 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 
 #### P3.9 — Performance / UX
 - [x] Add progress reporting (genes processed, failures, fallbacks).
-- [ ] Add optional parallelization (careful: determinism + stable sorting).
+- [x] Add optional parallelization (careful: determinism + stable sorting).
+  - [x] Plan A supports `--gene-lmm-jobs` (thread pool; preserves stable output sorting).
 - [ ] Add caching of per-gene fits (optional; keyed by inputs) to speed iteration.
 
 #### P3.10 — Docs + Release

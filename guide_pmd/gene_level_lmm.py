@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+import time
 import warnings
 
 import numpy as np
@@ -119,6 +121,273 @@ def _extract_re_sds(result: sm.regression.mixed_linear_model.MixedLMResults, *, 
     return sigma_alpha, np.nan
 
 
+def _fit_gene_lmm_task(
+    *,
+    response_matrix: pd.DataFrame,
+    gene_to_guides: dict[str, list[str]],
+    mm: pd.DataFrame,
+    mm_reset: pd.DataFrame,
+    gene_id: str,
+    focal_var: str,
+    allow_random_slope: bool,
+    min_guides_random_slope: int,
+    max_iter: int,
+    fallback_to_meta: bool,
+    meta_lookup: dict[tuple[str, str], dict[str, float]] | None,
+) -> dict[str, object]:
+    fixed_cols_full = list(mm.columns)
+    if focal_var not in fixed_cols_full:
+        raise ValueError(f"focal var missing from model_matrix: {focal_var}")
+    fixed_cols_null = [c for c in fixed_cols_full if c != focal_var]
+
+    guides = gene_to_guides.get(str(gene_id), [])
+    sub = response_matrix.loc[guides, :] if guides else response_matrix.iloc[0:0, :]
+    m_guides_total = int(sub.shape[0])
+    n_samples = int(sub.shape[1])
+    n_obs = int(m_guides_total * n_samples)
+
+    if m_guides_total == 0:
+        return {
+            "gene_id": str(gene_id),
+            "focal_var": str(focal_var),
+            "method": "failed",
+            "model": "",
+            "optimizer_full": "",
+            "optimizer_null": "",
+            "theta": np.nan,
+            "se_theta": np.nan,
+            "wald_z": np.nan,
+            "wald_p": np.nan,
+            "wald_ok": False,
+            "wald_p_adj": np.nan,
+            "lrt_stat": np.nan,
+            "lrt_stat_raw": np.nan,
+            "lrt_p": np.nan,
+            "lrt_ok": False,
+            "lrt_p_adj": np.nan,
+            "lrt_clipped": False,
+            "sigma_alpha": np.nan,
+            "tau": np.nan,
+            "converged_full": False,
+            "converged_null": False,
+            "m_guides_total": 0.0,
+            "m_guides_used": 0.0,
+            "n_samples": float(n_samples),
+            "n_obs": float(n_obs),
+            "fit_error": "no guides for gene in response_matrix",
+        }
+
+    long_df = _wide_to_long(sub)
+    long_df = long_df.merge(mm_reset, on="sample_id", how="left", validate="many_to_one")
+    if long_df[fixed_cols_full].isna().any().any():
+        raise ValueError(f"model_matrix missing sample ids after join for gene {gene_id}")
+
+    endog = long_df["y"].astype(float)
+    groups = long_df["guide_id"].astype(str)
+    random_slope = bool(allow_random_slope) and (m_guides_total >= int(min_guides_random_slope))
+
+    def fit_with_structure(use_random_slope: bool) -> dict[str, object]:
+        exog_full = long_df[fixed_cols_full].astype(float)
+        exog_null = long_df[fixed_cols_null].astype(float)
+
+        if use_random_slope:
+            exog_re = pd.DataFrame(
+                {
+                    "Intercept_re": np.ones(long_df.shape[0], dtype=float),
+                    f"{focal_var}_re": long_df[focal_var].astype(float).to_numpy(),
+                },
+                index=long_df.index,
+            )
+            model_name = "ri+rs"
+        else:
+            exog_re = pd.DataFrame(
+                {"Intercept_re": np.ones(long_df.shape[0], dtype=float)},
+                index=long_df.index,
+            )
+            model_name = "ri"
+
+        full_res, full_err = _fit_mixedlm(
+            endog,
+            exog_full,
+            groups=groups,
+            exog_re=exog_re,
+            max_iter=max_iter,
+        )
+        null_res, null_err = _fit_mixedlm(
+            endog,
+            exog_null,
+            groups=groups,
+            exog_re=exog_re,
+            max_iter=max_iter,
+        )
+
+        converged_full = bool(getattr(full_res, "converged", False)) if full_res is not None else False
+        converged_null = bool(getattr(null_res, "converged", False)) if null_res is not None else False
+
+        fit_error = "; ".join([e for e in [full_err, null_err] if e]) if (full_err or null_err) else ""
+        if (full_res is None) or (null_res is None) or (not converged_full) or (not converged_null):
+            return {
+                "ok": False,
+                "model": model_name,
+                "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else "",
+                "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", "") if null_res is not None else "",
+                "full_res": full_res,
+                "null_res": null_res,
+                "converged_full": converged_full,
+                "converged_null": converged_null,
+                "fit_error": fit_error or "non-converged fit",
+            }
+
+        theta = float(full_res.params.get(focal_var, np.nan))
+        se_theta = float(full_res.bse.get(focal_var, np.nan))
+        wald_z = float(theta / se_theta) if (np.isfinite(theta) and np.isfinite(se_theta) and se_theta > 0) else np.nan
+        wald_p = float(2 * norm.sf(abs(wald_z))) if np.isfinite(wald_z) else np.nan
+
+        ll_full = float(getattr(full_res, "llf", np.nan))
+        ll_null = float(getattr(null_res, "llf", np.nan))
+        lr_raw = float(2.0 * (ll_full - ll_null)) if (np.isfinite(ll_full) and np.isfinite(ll_null)) else np.nan
+        lr = lr_raw
+        lrt_clipped = False
+        if np.isfinite(lr_raw) and lr_raw < 0.0:
+            lr = 0.0
+            lrt_clipped = True
+        lrt_p = float(chi2.sf(lr, df=1)) if np.isfinite(lr) else np.nan
+
+        sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
+        return {
+            "ok": True,
+            "model": model_name,
+            "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", ""),
+            "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", ""),
+            "theta": theta,
+            "se_theta": se_theta,
+            "wald_z": wald_z,
+            "wald_p": wald_p,
+            "lrt_stat": lr,
+            "lrt_stat_raw": lr_raw,
+            "lrt_p": lrt_p,
+            "lrt_ok": bool(np.isfinite(lrt_p)),
+            "lrt_clipped": bool(lrt_clipped),
+            "sigma_alpha": sigma_alpha,
+            "tau": tau,
+            "converged_full": converged_full,
+            "converged_null": converged_null,
+            "fit_error": "",
+        }
+
+    res = fit_with_structure(random_slope)
+    if (not res["ok"]) and random_slope:
+        res = fit_with_structure(False)
+
+    if res["ok"]:
+        lrt_ok = bool(res["lrt_ok"])
+        wald_ok = bool(np.isfinite(res["wald_p"]))
+        fit_error = ""
+        if not lrt_ok:
+            fit_error = "lrt_invalid"
+        if (not wald_ok) and fit_error:
+            fit_error = f"{fit_error}; wald_invalid"
+        elif not wald_ok:
+            fit_error = "wald_invalid"
+
+        return {
+            "gene_id": str(gene_id),
+            "focal_var": str(focal_var),
+            "method": "lmm",
+            "model": res["model"],
+            "optimizer_full": res.get("optimizer_full", ""),
+            "optimizer_null": res.get("optimizer_null", ""),
+            "theta": res["theta"],
+            "se_theta": res["se_theta"],
+            "wald_z": res["wald_z"],
+            "wald_p": res["wald_p"],
+            "wald_ok": wald_ok,
+            "wald_p_adj": np.nan,
+            "lrt_stat": res["lrt_stat"],
+            "lrt_stat_raw": res["lrt_stat_raw"],
+            "lrt_p": res["lrt_p"],
+            "lrt_ok": lrt_ok,
+            "lrt_p_adj": np.nan,
+            "lrt_clipped": bool(res.get("lrt_clipped", False)),
+            "sigma_alpha": res["sigma_alpha"],
+            "tau": res["tau"],
+            "converged_full": res["converged_full"],
+            "converged_null": res["converged_null"],
+            "m_guides_total": float(m_guides_total),
+            "m_guides_used": float(m_guides_total),
+            "n_samples": float(n_samples),
+            "n_obs": float(n_obs),
+            "fit_error": fit_error,
+        }
+
+    if fallback_to_meta and (meta_lookup is not None):
+        meta_row = meta_lookup.get((str(gene_id), str(focal_var)))
+        if meta_row is not None:
+            theta = float(meta_row["theta"])
+            se_theta = float(meta_row["se_theta"])
+            z = float(meta_row["z"])
+            p = float(meta_row["p"])
+            return {
+                "gene_id": str(gene_id),
+                "focal_var": str(focal_var),
+                "method": "meta_fallback",
+                "model": res["model"],
+                "optimizer_full": res.get("optimizer_full", ""),
+                "optimizer_null": res.get("optimizer_null", ""),
+                "theta": theta,
+                "se_theta": se_theta,
+                "wald_z": z,
+                "wald_p": p,
+                "wald_ok": bool(np.isfinite(p)),
+                "wald_p_adj": np.nan,
+                "lrt_stat": np.nan,
+                "lrt_stat_raw": np.nan,
+                "lrt_p": np.nan,
+                "lrt_ok": False,
+                "lrt_p_adj": np.nan,
+                "lrt_clipped": False,
+                "sigma_alpha": np.nan,
+                "tau": float(meta_row["tau"]),
+                "converged_full": False,
+                "converged_null": False,
+                "m_guides_total": float(m_guides_total),
+                "m_guides_used": float(meta_row["m_guides_used"]),
+                "n_samples": float(n_samples),
+                "n_obs": float(n_obs),
+                "fit_error": f"lmm_failed: {res['fit_error']}",
+            }
+
+    return {
+        "gene_id": str(gene_id),
+        "focal_var": str(focal_var),
+        "method": "failed",
+        "model": res["model"],
+        "optimizer_full": res.get("optimizer_full", ""),
+        "optimizer_null": res.get("optimizer_null", ""),
+        "theta": np.nan,
+        "se_theta": np.nan,
+        "wald_z": np.nan,
+        "wald_p": np.nan,
+        "wald_ok": False,
+        "wald_p_adj": np.nan,
+        "lrt_stat": np.nan,
+        "lrt_stat_raw": np.nan,
+        "lrt_p": np.nan,
+        "lrt_ok": False,
+        "lrt_p_adj": np.nan,
+        "lrt_clipped": False,
+        "sigma_alpha": np.nan,
+        "tau": np.nan,
+        "converged_full": bool(res.get("converged_full", False)),
+        "converged_null": bool(res.get("converged_null", False)),
+        "m_guides_total": float(m_guides_total),
+        "m_guides_used": float(m_guides_total),
+        "n_samples": float(n_samples),
+        "n_obs": float(n_obs),
+        "fit_error": str(res.get("fit_error", "")),
+    }
+
+
 def compute_gene_lmm(
     response_matrix: pd.DataFrame,
     annotation_table: pd.DataFrame,
@@ -133,6 +402,10 @@ def compute_gene_lmm(
     fallback_to_meta: bool = True,
     meta_results: pd.DataFrame | None = None,
     selection_table: pd.DataFrame | None = None,
+    n_jobs: int = 1,
+    progress: bool = False,
+    progress_every: int = 500,
+    progress_min_seconds: float = 10.0,
 ) -> pd.DataFrame:
     """
     Compute gene-level mixed model results (Plan A) with explicit, recorded fallbacks.
@@ -164,6 +437,20 @@ def compute_gene_lmm(
             add_intercept=add_intercept,
         )
 
+    meta_lookup: dict[tuple[str, str], dict[str, float]] | None = None
+    if fallback_to_meta and meta_results is not None and (not meta_results.empty):
+        meta_lookup = {}
+        for row in meta_results.itertuples(index=False):
+            key = (str(getattr(row, "gene_id")), str(getattr(row, "focal_var")))
+            meta_lookup[key] = {
+                "theta": float(getattr(row, "theta")),
+                "se_theta": float(getattr(row, "se_theta")),
+                "z": float(getattr(row, "z")),
+                "p": float(getattr(row, "p")),
+                "tau": float(getattr(row, "tau")),
+                "m_guides_used": float(getattr(row, "m_guides_used")),
+            }
+
     genes_by_focal: dict[str, list[str]] | None = None
     if selection_table is not None:
         required = {"gene_id", "focal_var", "selected"}
@@ -180,251 +467,91 @@ def compute_gene_lmm(
             genes = sel.loc[sel["focal_var"] == focal_var, "gene_id"].unique().tolist()
             genes_by_focal[focal_var] = sorted([str(g) for g in genes])
 
-    out_rows: list[dict[str, object]] = []
+    n_jobs = int(n_jobs)
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be >= 1")
+    progress_every = int(progress_every)
+    if progress_every < 1:
+        progress_every = 1
+    progress_min_seconds = float(progress_min_seconds)
+
+    gene_to_guides: dict[str, list[str]] = {}
+    guide_set = set(response_matrix.index.astype(str).tolist())
+    for guide_id, gene_id in gene_ids.items():
+        gid = str(guide_id)
+        if gid not in guide_set:
+            continue
+        gene = str(gene_id)
+        gene_to_guides.setdefault(gene, []).append(gid)
+
+    mm_reset = mm.reset_index().rename(columns={mm.index.name or "index": "sample_id"})
+
+    tasks: list[tuple[str, str]] = []
+    all_gene_ids = sorted(gene_ids.unique().astype(str).tolist())
     for focal_var in sorted(focal_vars):
-        if focal_var not in mm.columns:
-            raise ValueError(f"focal var missing from model_matrix: {focal_var}")
-
-        fixed_cols_full = list(mm.columns)
-        fixed_cols_null = [c for c in fixed_cols_full if c != focal_var]
-        random_slope_allowed = bool(allow_random_slope)
-
         genes_to_fit = genes_by_focal.get(str(focal_var), []) if genes_by_focal is not None else None
-        gene_iter = genes_to_fit if genes_to_fit is not None else sorted(gene_ids.unique().tolist())
+        gene_iter = genes_to_fit if genes_to_fit is not None else all_gene_ids
         for gene_id in gene_iter:
-            guides = gene_ids.index[gene_ids == gene_id].tolist()
-            guides = [g for g in guides if g in response_matrix.index]
-            sub = response_matrix.loc[guides, :]
-            m_guides_total = int(sub.shape[0])
-            n_samples = int(sub.shape[1])
-            n_obs = int(m_guides_total * n_samples)
+            tasks.append((str(focal_var), str(gene_id)))
 
-            if m_guides_total == 0:
-                out_rows.append(
-                    {
-                        "gene_id": gene_id,
-                        "focal_var": focal_var,
-                        "method": "failed",
-                        "model": "",
-                        "theta": np.nan,
-                        "se_theta": np.nan,
-                        "wald_z": np.nan,
-                        "wald_p": np.nan,
-                        "wald_ok": False,
-                        "wald_p_adj": np.nan,
-                        "lrt_stat": np.nan,
-                        "lrt_p": np.nan,
-                        "lrt_ok": False,
-                        "lrt_p_adj": np.nan,
-                        "sigma_alpha": np.nan,
-                        "tau": np.nan,
-                        "converged_full": False,
-                        "converged_null": False,
-                        "m_guides_total": 0.0,
-                        "m_guides_used": 0.0,
-                        "n_samples": float(n_samples),
-                        "n_obs": float(n_obs),
-                        "fit_error": "no guides for gene in response_matrix",
-                    }
+    out_rows: list[dict[str, object]] = []
+    n_total = int(len(tasks))
+    t0 = time.monotonic()
+    last_print = t0
+
+    if progress and n_total:
+        n_unique_genes = len(set([g for _, g in tasks]))
+        print(f"gene-level lmm: fitting {n_total} task(s) ({n_unique_genes} gene(s) x {len(set([f for f, _ in tasks]))} focal var(s))")
+
+    if n_jobs == 1 or n_total == 0:
+        for idx, (focal_var, gene_id) in enumerate(tasks, start=1):
+            row = _fit_gene_lmm_task(
+                response_matrix=response_matrix,
+                gene_to_guides=gene_to_guides,
+                mm=mm,
+                mm_reset=mm_reset,
+                gene_id=gene_id,
+                focal_var=focal_var,
+                allow_random_slope=bool(allow_random_slope),
+                min_guides_random_slope=int(min_guides_random_slope),
+                max_iter=int(max_iter),
+                fallback_to_meta=bool(fallback_to_meta),
+                meta_lookup=meta_lookup,
+            )
+            out_rows.append(row)
+
+            if progress and (idx % progress_every == 0 or idx == n_total):
+                now = time.monotonic()
+                if (now - last_print) >= progress_min_seconds or idx == n_total:
+                    last_print = now
+                    rate = idx / max(1e-9, (now - t0))
+                    eta_s = (n_total - idx) / max(1e-9, rate)
+                    print(f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)")
+    else:
+        def _fit_one(task: tuple[str, str]) -> dict[str, object]:
+            focal_var, gene_id = task
+            try:
+                return _fit_gene_lmm_task(
+                    response_matrix=response_matrix,
+                    gene_to_guides=gene_to_guides,
+                    mm=mm,
+                    mm_reset=mm_reset,
+                    gene_id=gene_id,
+                    focal_var=focal_var,
+                    allow_random_slope=bool(allow_random_slope),
+                    min_guides_random_slope=int(min_guides_random_slope),
+                    max_iter=int(max_iter),
+                    fallback_to_meta=bool(fallback_to_meta),
+                    meta_lookup=meta_lookup,
                 )
-                continue
-
-            long_df = _wide_to_long(sub)
-            mm_reset = mm.reset_index().rename(columns={mm.index.name or "index": "sample_id"})
-            long_df = long_df.merge(mm_reset, on="sample_id", how="left", validate="many_to_one")
-            if long_df[fixed_cols_full].isna().any().any():
-                raise ValueError(f"model_matrix missing sample ids after join for gene {gene_id}")
-
-            endog = long_df["y"].astype(float)
-            groups = long_df["guide_id"].astype(str)
-            random_slope = random_slope_allowed and (m_guides_total >= int(min_guides_random_slope))
-
-            def fit_with_structure(use_random_slope: bool) -> dict[str, object]:
-                exog_full = long_df[fixed_cols_full].astype(float)
-                exog_null = long_df[fixed_cols_null].astype(float)
-
-                if use_random_slope:
-                    exog_re = pd.DataFrame(
-                        {
-                            "Intercept_re": np.ones(long_df.shape[0], dtype=float),
-                            f"{focal_var}_re": long_df[focal_var].astype(float).to_numpy(),
-                        },
-                        index=long_df.index,
-                    )
-                    model_name = "ri+rs"
-                else:
-                    exog_re = pd.DataFrame(
-                        {"Intercept_re": np.ones(long_df.shape[0], dtype=float)},
-                        index=long_df.index,
-                    )
-                    model_name = "ri"
-
-                full_res, full_err = _fit_mixedlm(
-                    endog,
-                    exog_full,
-                    groups=groups,
-                    exog_re=exog_re,
-                    max_iter=max_iter,
-                )
-                null_res, null_err = _fit_mixedlm(
-                    endog,
-                    exog_null,
-                    groups=groups,
-                    exog_re=exog_re,
-                    max_iter=max_iter,
-                )
-
-                converged_full = bool(getattr(full_res, "converged", False)) if full_res is not None else False
-                converged_null = bool(getattr(null_res, "converged", False)) if null_res is not None else False
-
-                fit_error = "; ".join([e for e in [full_err, null_err] if e]) if (full_err or null_err) else ""
-                if (full_res is None) or (null_res is None) or (not converged_full) or (not converged_null):
-                    return {
-                        "ok": False,
-                        "model": model_name,
-                        "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else "",
-                        "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", "") if null_res is not None else "",
-                        "full_res": full_res,
-                        "null_res": null_res,
-                        "converged_full": converged_full,
-                        "converged_null": converged_null,
-                        "fit_error": fit_error or "non-converged fit",
-                    }
-
-                theta = float(full_res.params.get(focal_var, np.nan))
-                se_theta = float(full_res.bse.get(focal_var, np.nan))
-                wald_z = float(theta / se_theta) if (np.isfinite(theta) and np.isfinite(se_theta) and se_theta > 0) else np.nan
-                wald_p = float(2 * norm.sf(abs(wald_z))) if np.isfinite(wald_z) else np.nan
-
-                ll_full = float(getattr(full_res, "llf", np.nan))
-                ll_null = float(getattr(null_res, "llf", np.nan))
-                lr_raw = float(2.0 * (ll_full - ll_null)) if (np.isfinite(ll_full) and np.isfinite(ll_null)) else np.nan
-                lr = lr_raw
-                lrt_clipped = False
-                if np.isfinite(lr_raw) and lr_raw < 0.0:
-                    lr = 0.0
-                    lrt_clipped = True
-                lrt_p = float(chi2.sf(lr, df=1)) if np.isfinite(lr) else np.nan
-
-                sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
+            except Exception as exc:
                 return {
-                    "ok": True,
-                    "model": model_name,
-                    "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", ""),
-                    "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", ""),
-                    "theta": theta,
-                    "se_theta": se_theta,
-                    "wald_z": wald_z,
-                    "wald_p": wald_p,
-                    "lrt_stat": lr,
-                    "lrt_stat_raw": lr_raw,
-                    "lrt_p": lrt_p,
-                    "lrt_ok": bool(np.isfinite(lrt_p)),
-                    "lrt_clipped": bool(lrt_clipped),
-                    "sigma_alpha": sigma_alpha,
-                    "tau": tau,
-                    "converged_full": converged_full,
-                    "converged_null": converged_null,
-                    "fit_error": "",
-                }
-
-            res = fit_with_structure(random_slope)
-            if (not res["ok"]) and random_slope:
-                res = fit_with_structure(False)
-
-            if res["ok"]:
-                lrt_ok = bool(res["lrt_ok"])
-                wald_ok = bool(np.isfinite(res["wald_p"]))
-                fit_error = ""
-                if not lrt_ok:
-                    fit_error = "lrt_invalid"
-                if (not wald_ok) and fit_error:
-                    fit_error = f"{fit_error}; wald_invalid"
-                elif not wald_ok:
-                    fit_error = "wald_invalid"
-
-                out_rows.append(
-                    {
-                        "gene_id": gene_id,
-                        "focal_var": focal_var,
-                        "method": "lmm",
-                        "model": res["model"],
-                        "optimizer_full": res.get("optimizer_full", ""),
-                        "optimizer_null": res.get("optimizer_null", ""),
-                        "theta": res["theta"],
-                        "se_theta": res["se_theta"],
-                        "wald_z": res["wald_z"],
-                        "wald_p": res["wald_p"],
-                        "wald_ok": wald_ok,
-                        "wald_p_adj": np.nan,
-                        "lrt_stat": res["lrt_stat"],
-                        "lrt_stat_raw": res["lrt_stat_raw"],
-                        "lrt_p": res["lrt_p"],
-                        "lrt_ok": lrt_ok,
-                        "lrt_p_adj": np.nan,
-                        "lrt_clipped": bool(res.get("lrt_clipped", False)),
-                        "sigma_alpha": res["sigma_alpha"],
-                        "tau": res["tau"],
-                        "converged_full": res["converged_full"],
-                        "converged_null": res["converged_null"],
-                        "m_guides_total": float(m_guides_total),
-                        "m_guides_used": float(m_guides_total),
-                        "n_samples": float(n_samples),
-                        "n_obs": float(n_obs),
-                        "fit_error": fit_error,
-                    }
-                )
-                continue
-
-            if fallback_to_meta and (meta_results is not None):
-                meta_row = meta_results[(meta_results["gene_id"] == gene_id) & (meta_results["focal_var"] == focal_var)]
-                if meta_row.shape[0] == 1:
-                    meta_row = meta_row.iloc[0]
-                    theta = float(meta_row["theta"])
-                    se_theta = float(meta_row["se_theta"])
-                    z = float(meta_row["z"])
-                    p = float(meta_row["p"])
-                    out_rows.append(
-                        {
-                            "gene_id": gene_id,
-                            "focal_var": focal_var,
-                            "method": "meta_fallback",
-                            "model": res["model"],
-                            "optimizer_full": res.get("optimizer_full", ""),
-                            "optimizer_null": res.get("optimizer_null", ""),
-                            "theta": theta,
-                            "se_theta": se_theta,
-                            "wald_z": z,
-                            "wald_p": p,
-                            "wald_ok": bool(np.isfinite(p)),
-                            "wald_p_adj": np.nan,
-                            "lrt_stat": np.nan,
-                            "lrt_stat_raw": np.nan,
-                            "lrt_p": np.nan,
-                            "lrt_ok": False,
-                            "lrt_p_adj": np.nan,
-                            "lrt_clipped": False,
-                            "sigma_alpha": np.nan,
-                            "tau": float(meta_row["tau"]),
-                            "converged_full": False,
-                            "converged_null": False,
-                            "m_guides_total": float(m_guides_total),
-                            "m_guides_used": float(meta_row["m_guides_used"]),
-                            "n_samples": float(n_samples),
-                            "n_obs": float(n_obs),
-                            "fit_error": f"lmm_failed: {res['fit_error']}",
-                        }
-                    )
-                    continue
-
-            out_rows.append(
-                {
-                    "gene_id": gene_id,
-                    "focal_var": focal_var,
+                    "gene_id": str(gene_id),
+                    "focal_var": str(focal_var),
                     "method": "failed",
-                    "model": res["model"],
-                    "optimizer_full": res.get("optimizer_full", ""),
-                    "optimizer_null": res.get("optimizer_null", ""),
+                    "model": "",
+                    "optimizer_full": "",
+                    "optimizer_null": "",
                     "theta": np.nan,
                     "se_theta": np.nan,
                     "wald_z": np.nan,
@@ -439,15 +566,25 @@ def compute_gene_lmm(
                     "lrt_clipped": False,
                     "sigma_alpha": np.nan,
                     "tau": np.nan,
-                    "converged_full": bool(res.get("converged_full", False)),
-                    "converged_null": bool(res.get("converged_null", False)),
-                    "m_guides_total": float(m_guides_total),
-                    "m_guides_used": float(m_guides_total),
-                    "n_samples": float(n_samples),
-                    "n_obs": float(n_obs),
-                    "fit_error": str(res.get("fit_error", "")),
+                    "converged_full": False,
+                    "converged_null": False,
+                    "m_guides_total": np.nan,
+                    "m_guides_used": np.nan,
+                    "n_samples": np.nan,
+                    "n_obs": np.nan,
+                    "fit_error": f"exception: {type(exc).__name__}: {exc}",
                 }
-            )
+
+        with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+            for idx, row in enumerate(executor.map(_fit_one, tasks), start=1):
+                out_rows.append(row)
+                if progress and (idx % progress_every == 0 or idx == n_total):
+                    now = time.monotonic()
+                    if (now - last_print) >= progress_min_seconds or idx == n_total:
+                        last_print = now
+                        rate = idx / max(1e-9, (now - t0))
+                        eta_s = (n_total - idx) / max(1e-9, rate)
+                        print(f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)")
 
     columns = [
         "gene_id",
