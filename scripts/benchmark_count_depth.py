@@ -36,6 +36,10 @@ class CountDepthBenchmarkConfig:
     depth_log_sd: float
     # Optional extra Poisson noise layer on depth factors.
     depth_poisson_scale: float
+    # Optional batch structure + confounding (currently supports n_batches in {1, 2}).
+    n_batches: int
+    batch_confounding_strength: float
+    batch_depth_log_sd: float
     # Treatment can be confounded with depth (multiplier applied to treatment samples).
     treatment_depth_multiplier: float
     # True treatment effects (gene-level), and guide-level slope heterogeneity.
@@ -51,8 +55,12 @@ class CountDepthBenchmarkConfig:
     response_mode: str
     pmd_n_boot: int
     pmd_seed: int
+    # Count distribution / overdispersion (Var = mu + nb_overdispersion * mu^2; 0 => Poisson).
+    nb_overdispersion: float
     # Whether to include log-depth as a nuisance covariate in the model matrix.
     include_depth_covariate: bool
+    # Whether to include batch indicators as nuisance covariates in the model matrix.
+    include_batch_covariate: bool
     # LMM options (keep small for speed by default).
     allow_random_slope: bool
     min_guides_random_slope: int
@@ -76,6 +84,12 @@ class CountDepthBenchmarkConfig:
             raise ValueError("gene_lambda_log_sd must be >= 0")
         if self.depth_poisson_scale < 0:
             raise ValueError("depth_poisson_scale must be >= 0")
+        if int(self.n_batches) not in {1, 2}:
+            raise ValueError("n_batches must be in {1, 2}")
+        if not (0.0 <= float(self.batch_confounding_strength) <= 1.0):
+            raise ValueError("batch_confounding_strength must be in [0, 1]")
+        if float(self.batch_depth_log_sd) < 0:
+            raise ValueError("batch_depth_log_sd must be >= 0")
         if not (0.0 <= self.frac_signal <= 1.0):
             raise ValueError("frac_signal must be in [0, 1]")
         if float(self.guide_slope_sd) < 0:
@@ -93,6 +107,8 @@ class CountDepthBenchmarkConfig:
                 raise ValueError("pmd_n_boot must be >= 2 (required for valid PMD z-scores)")
             if int(self.pmd_seed) < 0:
                 raise ValueError("pmd_seed must be >= 0")
+        if float(self.nb_overdispersion) < 0:
+            raise ValueError("nb_overdispersion must be >= 0")
         if self.min_guides_random_slope < 2:
             raise ValueError("min_guides_random_slope must be >= 2")
         if self.max_iter <= 0:
@@ -122,6 +138,57 @@ def _simulate_depth_factors(
         depth_counts = rng.poisson(depth * float(depth_poisson_scale)).astype(float)
         depth = np.maximum(depth_counts, 1.0) / float(depth_poisson_scale)
     return depth
+
+
+def _assign_batches(
+    rng: np.random.Generator,
+    *,
+    treatment: np.ndarray,
+    n_batches: int,
+    confounding_strength: float,
+) -> np.ndarray:
+    n_batches = int(n_batches)
+    if n_batches == 1:
+        return np.zeros(int(treatment.size), dtype=int)
+    if n_batches != 2:
+        raise ValueError("only n_batches in {1, 2} are supported")
+
+    treat = np.asarray(treatment, dtype=float)
+    is_treat = treat > 0
+    n_treat = int(np.sum(is_treat))
+    n_ctrl = int(treat.size - n_treat)
+
+    strength = float(confounding_strength)
+    p_treat_b1 = 0.5 + 0.5 * strength
+    p_ctrl_b1 = 0.5 - 0.5 * strength
+
+    n_treat_b1 = int(np.clip(np.round(p_treat_b1 * n_treat), 0, n_treat))
+    n_ctrl_b1 = int(np.clip(np.round(p_ctrl_b1 * n_ctrl), 0, n_ctrl))
+
+    ctrl_batches = np.array([1] * n_ctrl_b1 + [0] * (n_ctrl - n_ctrl_b1), dtype=int)
+    treat_batches = np.array([1] * n_treat_b1 + [0] * (n_treat - n_treat_b1), dtype=int)
+
+    ctrl_batches = rng.permutation(ctrl_batches)
+    treat_batches = rng.permutation(treat_batches)
+
+    out = np.empty(int(treat.size), dtype=int)
+    out[~is_treat] = ctrl_batches
+    out[is_treat] = treat_batches
+    return out
+
+
+def _draw_counts(rng: np.random.Generator, mu: np.ndarray, *, nb_overdispersion: float) -> np.ndarray:
+    mu = np.asarray(mu, dtype=float)
+    phi = float(nb_overdispersion)
+    if phi <= 0:
+        return rng.poisson(mu).astype(int)
+
+    # Gamma-Poisson mixture: if gamma ~ Gamma(shape=1/phi, scale=phi), then E[gamma]=1, Var[gamma]=phi and
+    # counts ~ Poisson(mu * gamma) implies Var[counts] = mu + phi * mu^2.
+    shape = 1.0 / phi
+    scale = phi
+    gamma = rng.gamma(shape=shape, scale=scale, size=mu.shape).astype(float)
+    return rng.poisson(mu * gamma).astype(int)
 
 
 def _compute_pmd_std_res(counts_df: pd.DataFrame, *, n_boot: int, seed: int) -> pd.DataFrame:
@@ -180,7 +247,7 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
 
 def simulate_counts_and_std_res(
     cfg: CountDepthBenchmarkConfig,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cfg.validate()
     rng = np.random.default_rng(int(cfg.seed))
 
@@ -191,6 +258,13 @@ def simulate_counts_and_std_res(
     sample_ids = [f"ctrl_{i:03d}" for i in range(n_control)] + [f"treat_{i:03d}" for i in range(n_treat)]
     treatment = np.array([0.0] * n_control + [1.0] * n_treat, dtype=float)
 
+    batch_id = _assign_batches(
+        rng,
+        treatment=treatment,
+        n_batches=int(cfg.n_batches),
+        confounding_strength=float(cfg.batch_confounding_strength),
+    )
+
     depth_factor = _simulate_depth_factors(
         rng,
         n_samples,
@@ -198,6 +272,9 @@ def simulate_counts_and_std_res(
         depth_log_sd=cfg.depth_log_sd,
         depth_poisson_scale=cfg.depth_poisson_scale,
     )
+    if float(cfg.batch_depth_log_sd) > 0:
+        batch_shift = rng.normal(loc=0.0, scale=float(cfg.batch_depth_log_sd), size=int(cfg.n_batches)).astype(float)
+        depth_factor = depth_factor * np.exp(batch_shift[batch_id])
     depth_factor = depth_factor * np.where(treatment > 0, float(cfg.treatment_depth_multiplier), 1.0)
     log_depth = np.log(depth_factor)
 
@@ -252,7 +329,7 @@ def simulate_counts_and_std_res(
 
             mu = lambda_base * depth_factor * np.exp(theta_guide * treatment)
             mu = np.clip(mu, a_min=0.0, a_max=None)
-            counts = rng.poisson(mu).astype(int)
+            counts = _draw_counts(rng, mu, nb_overdispersion=float(cfg.nb_overdispersion))
 
             guides.append(guide_id)
             gene_for_guide.append(gene_id)
@@ -283,6 +360,19 @@ def simulate_counts_and_std_res(
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
     if bool(cfg.include_depth_covariate):
         model_matrix["log_depth"] = log_depth
+    if bool(cfg.include_batch_covariate) and int(cfg.n_batches) > 1:
+        for b in range(1, int(cfg.n_batches)):
+            model_matrix[f"batch_{b}"] = (batch_id == b).astype(float)
+
+    truth_sample = pd.DataFrame(
+        {
+            "sample_id": sample_ids,
+            "treatment": treatment.astype(float),
+            "batch_id": batch_id.astype(int),
+            "depth_factor": depth_factor.astype(float),
+            "log_depth": log_depth.astype(float),
+        }
+    )
 
     truth_guide = pd.DataFrame(
         {
@@ -303,6 +393,7 @@ def simulate_counts_and_std_res(
         annotation_df,
         std_res_df,
         model_matrix,
+        truth_sample,
         truth_gene.merge(truth_guide.groupby("gene_id").size().rename("m_guides"), on="gene_id"),
         truth_guide,
     )
@@ -407,12 +498,13 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     cfg.validate()
     os.makedirs(out_dir, exist_ok=True)
 
-    counts_df, ann_df, std_res_df, mm, truth_gene, truth_guide = simulate_counts_and_std_res(cfg)
+    counts_df, ann_df, std_res_df, mm, truth_sample, truth_gene, truth_guide = simulate_counts_and_std_res(cfg)
 
     # Write inputs for reproducibility.
     counts_path = os.path.join(out_dir, "sim_counts.tsv")
     mm_path = os.path.join(out_dir, "sim_model_matrix.tsv")
     std_res_path = os.path.join(out_dir, "sim_std_res.tsv")
+    truth_sample_path = os.path.join(out_dir, "sim_truth_sample.tsv")
     truth_path = os.path.join(out_dir, "sim_truth_gene.tsv")
     truth_guide_path = os.path.join(out_dir, "sim_truth_guide.tsv")
 
@@ -422,6 +514,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     counts_out.to_csv(counts_path, sep="\t")
     mm.to_csv(mm_path, sep="\t", index_label="sample_id")
     std_res_df.to_csv(std_res_path, sep="\t")
+    truth_sample.to_csv(truth_sample_path, sep="\t", index=False)
     truth_gene.to_csv(truth_path, sep="\t", index=False)
     truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
 
@@ -500,6 +593,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "counts_tsv": counts_path,
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
+            "truth_sample_tsv": truth_sample_path,
             "truth_gene_tsv": truth_path,
             "truth_guide_tsv": truth_guide_path,
             "gene_meta_tsv": meta_out_path if "meta" in cfg.methods else "",
@@ -604,6 +698,19 @@ def main() -> None:
     parser.add_argument("--depth-log-mean", type=float, default=0.0, help="log-mean of depth factor.")
     parser.add_argument("--depth-log-sd", type=float, default=1.0, help="log-sd of depth factor (order-of-magnitude variation ~ 1).")
     parser.add_argument("--depth-poisson-scale", type=float, default=0.0, help="Optional Poisson noise on depth factors (0 disables).")
+    parser.add_argument("--n-batches", type=int, default=1, help="Number of batches (supports 1 or 2; default: 1).")
+    parser.add_argument(
+        "--batch-confounding-strength",
+        type=float,
+        default=0.0,
+        help="Strength of treatment↔batch confounding in [0,1] (only used when n_batches=2).",
+    )
+    parser.add_argument(
+        "--batch-depth-log-sd",
+        type=float,
+        default=0.0,
+        help="Per-batch log-depth shift SD (default: 0; only meaningful when n_batches>1).",
+    )
     parser.add_argument("--treatment-depth-multiplier", type=float, default=1.0, help="Depth multiplier applied to treatment samples.")
     parser.add_argument("--frac-signal", type=float, default=0.2, help="Fraction of truly non-null genes.")
     parser.add_argument("--effect-sd", type=float, default=0.5, help="SD of gene-level treatment effects.")
@@ -626,6 +733,18 @@ def main() -> None:
         help="PMD RNG seed (only used for response-mode=pmd_std_res); defaults to --seed.",
     )
     parser.add_argument("--include-depth-covariate", action="store_true", help="Include log_depth in model matrix as a nuisance covariate.")
+    parser.add_argument(
+        "--include-batch-covariate",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include batch indicators in the model matrix (default: False).",
+    )
+    parser.add_argument(
+        "--nb-overdispersion",
+        type=float,
+        default=0.0,
+        help="Negative-binomial overdispersion phi (Var = mu + phi * mu^2; 0 => Poisson).",
+    )
     parser.add_argument("--allow-random-slope", action=argparse.BooleanOptionalAction, default=True, help="Allow random slope in LMM (default: True).")
     parser.add_argument("--min-guides-random-slope", type=int, default=3, help="Minimum guides for RI+RS (default: 3).")
     parser.add_argument("--max-iter", type=int, default=200, help="Max iterations per MixedLM fit (default: 200).")
@@ -659,6 +778,9 @@ def main() -> None:
         depth_log_mean=args.depth_log_mean,
         depth_log_sd=args.depth_log_sd,
         depth_poisson_scale=args.depth_poisson_scale,
+        n_batches=int(args.n_batches),
+        batch_confounding_strength=float(args.batch_confounding_strength),
+        batch_depth_log_sd=float(args.batch_depth_log_sd),
         treatment_depth_multiplier=args.treatment_depth_multiplier,
         frac_signal=args.frac_signal,
         effect_sd=args.effect_sd,
@@ -669,7 +791,9 @@ def main() -> None:
         response_mode=str(args.response_mode),
         pmd_n_boot=int(args.pmd_n_boot),
         pmd_seed=int(args.seed if args.pmd_seed is None else args.pmd_seed),
+        nb_overdispersion=float(args.nb_overdispersion),
         include_depth_covariate=bool(args.include_depth_covariate),
+        include_batch_covariate=bool(args.include_batch_covariate),
         allow_random_slope=bool(args.allow_random_slope),
         min_guides_random_slope=args.min_guides_random_slope,
         max_iter=args.max_iter,

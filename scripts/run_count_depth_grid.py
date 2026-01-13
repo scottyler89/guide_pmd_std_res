@@ -55,6 +55,21 @@ def main() -> None:
         help="Gene-level log-sd on lambda (default: 0.5).",
     )
     parser.add_argument("--depth-log-sd", type=float, nargs="+", default=[1.0], help="Depth log-sd values (default: 1.0).")
+    parser.add_argument("--n-batches", type=int, nargs="+", default=[1], help="Number of batches (supports 1 or 2; default: 1).")
+    parser.add_argument(
+        "--batch-confounding-strength",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        help="Treatment↔batch confounding strengths in [0,1] (default: 0).",
+    )
+    parser.add_argument(
+        "--batch-depth-log-sd",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        help="Per-batch log-depth shift SD values (default: 0).",
+    )
     parser.add_argument(
         "--treatment-depth-multiplier",
         type=float,
@@ -67,6 +82,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="If set, run only with or without the depth covariate; default runs both.",
+    )
+    parser.add_argument(
+        "--include-batch-covariate",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="If set, run only with or without batch indicators; default runs both.",
     )
     parser.add_argument(
         "--response-mode",
@@ -94,20 +115,50 @@ def main() -> None:
     parser.add_argument("--guide-slope-sd", type=float, nargs="+", default=[0.2], help="Guide slope SD (signal genes only).")
     parser.add_argument("--offtarget-guide-frac", type=float, nargs="+", default=[0.0], help="Off-target guide fraction (default: 0).")
     parser.add_argument("--offtarget-slope-sd", type=float, nargs="+", default=[0.0], help="Off-target slope SD (default: 0).")
+    parser.add_argument(
+        "--nb-overdispersion",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        help="NB overdispersion phi values (Var = mu + phi*mu^2; default: 0 => Poisson).",
+    )
     parser.add_argument("--max-iter", type=int, default=200, help="Max iter for MixedLM (only used when methods include lmm).")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
 
     include_depth_opts = [False, True] if args.include_depth_covariate is None else [bool(args.include_depth_covariate)]
+    include_batch_opts = [False, True] if args.include_batch_covariate is None else [bool(args.include_batch_covariate)]
 
     rows: list[dict[str, object]] = []
-    for seed, n_genes, depth_log_sd, tdm, include_depth, frac_signal, effect_sd, guide_slope_sd, gene_lambda_log_sd, guide_lambda_log_sd, ot_frac, ot_sd in product(
+    for (
+        seed,
+        n_genes,
+        depth_log_sd,
+        n_batches,
+        batch_strength,
+        batch_depth_log_sd,
+        tdm,
+        include_depth,
+        include_batch,
+        frac_signal,
+        effect_sd,
+        guide_slope_sd,
+        gene_lambda_log_sd,
+        guide_lambda_log_sd,
+        ot_frac,
+        ot_sd,
+        nb_overdispersion,
+    ) in product(
         [int(s) for s in args.seeds],
         [int(n) for n in args.n_genes],
         [float(x) for x in args.depth_log_sd],
+        [int(x) for x in args.n_batches],
+        [float(x) for x in args.batch_confounding_strength],
+        [float(x) for x in args.batch_depth_log_sd],
         [float(x) for x in args.treatment_depth_multiplier],
         include_depth_opts,
+        include_batch_opts,
         [float(x) for x in args.frac_signal],
         [float(x) for x in args.effect_sd],
         [float(x) for x in args.guide_slope_sd],
@@ -115,6 +166,7 @@ def main() -> None:
         [float(x) for x in args.guide_lambda_log_sd],
         [float(x) for x in args.offtarget_guide_frac],
         [float(x) for x in args.offtarget_slope_sd],
+        [float(x) for x in args.nb_overdispersion],
     ):
         tag = (
             f"seed={seed}"
@@ -122,8 +174,12 @@ def main() -> None:
             f"__pmdnb={int(args.pmd_n_boot)}"
             f"__n_genes={n_genes}"
             f"__dlsd={depth_log_sd}"
+            f"__nbatch={int(n_batches)}"
+            f"__bcs={batch_strength}"
+            f"__bdlsd={batch_depth_log_sd}"
             f"__tdm={tdm}"
             f"__depthcov={int(include_depth)}"
+            f"__batchcov={int(include_batch)}"
             f"__fs={frac_signal}"
             f"__esd={effect_sd}"
             f"__gssd={guide_slope_sd}"
@@ -131,6 +187,7 @@ def main() -> None:
             f"__gllsd_within={guide_lambda_log_sd}"
             f"__otf={ot_frac}"
             f"__otsd={ot_sd}"
+            f"__nbphi={nb_overdispersion}"
         )
         run_dir = os.path.join(args.out_dir, tag)
         cmd = [
@@ -154,6 +211,12 @@ def main() -> None:
             str(float(gene_lambda_log_sd)),
             "--depth-log-sd",
             str(depth_log_sd),
+            "--n-batches",
+            str(int(n_batches)),
+            "--batch-confounding-strength",
+            str(float(batch_strength)),
+            "--batch-depth-log-sd",
+            str(float(batch_depth_log_sd)),
             "--treatment-depth-multiplier",
             str(tdm),
             "--seed",
@@ -172,6 +235,8 @@ def main() -> None:
             str(args.response_mode),
             "--pmd-n-boot",
             str(int(args.pmd_n_boot)),
+            "--nb-overdispersion",
+            str(float(nb_overdispersion)),
             "--methods",
             *[str(m) for m in args.methods],
             "--max-iter",
@@ -179,6 +244,7 @@ def main() -> None:
         ]
         if include_depth:
             cmd.append("--include-depth-covariate")
+        cmd.append("--include-batch-covariate" if include_batch else "--no-include-batch-covariate")
         cmd.append("--qq-plots" if bool(args.qq_plots) else "--no-qq-plots")
 
         report_path = _run_one(cmd)
@@ -193,8 +259,12 @@ def main() -> None:
             "n_genes": n_genes,
             "guides_per_gene": int(report["config"]["guides_per_gene"]),
             "depth_log_sd": depth_log_sd,
+            "n_batches": int(report["config"]["n_batches"]),
+            "batch_confounding_strength": float(report["config"]["batch_confounding_strength"]),
+            "batch_depth_log_sd": float(report["config"]["batch_depth_log_sd"]),
             "treatment_depth_multiplier": tdm,
             "include_depth_covariate": include_depth,
+            "include_batch_covariate": include_batch,
             "response_mode": report["config"]["response_mode"],
             "guide_lambda_log_mean": float(report["config"]["guide_lambda_log_mean"]),
             "guide_lambda_log_sd": float(report["config"]["guide_lambda_log_sd"]),
@@ -205,6 +275,7 @@ def main() -> None:
             "guide_slope_sd": float(report["config"]["guide_slope_sd"]),
             "offtarget_guide_frac": float(report["config"]["offtarget_guide_frac"]),
             "offtarget_slope_sd": float(report["config"]["offtarget_slope_sd"]),
+            "nb_overdispersion": float(report["config"]["nb_overdispersion"]),
         }
 
         runtime = report.get("runtime_sec", {})
@@ -248,8 +319,12 @@ def main() -> None:
         "pmd_n_boot",
         "n_genes",
         "depth_log_sd",
+        "n_batches",
+        "batch_confounding_strength",
+        "batch_depth_log_sd",
         "treatment_depth_multiplier",
         "include_depth_covariate",
+        "include_batch_covariate",
         "frac_signal",
         "effect_sd",
         "guide_slope_sd",
@@ -257,6 +332,7 @@ def main() -> None:
         "guide_lambda_log_sd",
         "offtarget_guide_frac",
         "offtarget_slope_sd",
+        "nb_overdispersion",
         "seed",
     ]
     df = pd.DataFrame(rows).sort_values(sort_cols).reset_index(drop=True)
