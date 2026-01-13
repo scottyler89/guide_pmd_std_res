@@ -272,7 +272,7 @@ def simulate_counts_and_std_res(
         depth_log_sd=cfg.depth_log_sd,
         depth_poisson_scale=cfg.depth_poisson_scale,
     )
-    if float(cfg.batch_depth_log_sd) > 0:
+    if int(cfg.n_batches) > 1 and float(cfg.batch_depth_log_sd) > 0:
         batch_shift = rng.normal(loc=0.0, scale=float(cfg.batch_depth_log_sd), size=int(cfg.n_batches)).astype(float)
         depth_factor = depth_factor * np.exp(batch_shift[batch_id])
     depth_factor = depth_factor * np.where(treatment > 0, float(cfg.treatment_depth_multiplier), 1.0)
