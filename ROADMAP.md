@@ -162,7 +162,7 @@ Phase E — Run Plan A only on the selected set (still default-on)
 - [x] Preserve current explicit failure behavior (`meta_fallback` on fit failure; no silent fallbacks).
 
 Phase F — Tests + real-data regression
-- [ ] Unit tests for `Q_p` / `Q_p_adj` (edge cases: `m=0/1/2`, zero variance).
+- [x] Unit tests for `Q_p` / `Q_p_adj` (edge cases: `m=0/1/2`, zero variance).
 - [x] Unit tests for selection determinism + reason labeling.
 - [x] Integration test: default selection produces `PMD_std_res_gene_lmm_selection.tsv` and does not change baseline TSV bytes.
 - [ ] Add a local, non-committed st941c prototype runner doc/snippet that uses `--std-res-file` to validate behavior quickly.
@@ -178,13 +178,15 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] median of per-guide slopes
   - [x] trimmed mean / winsorized mean
   - [x] Huber M-estimator (optional)
-- [ ] Define “flagged gene” criteria from rubric (thresholds + rationale + configurability).
-- [ ] Optional targeted models for flagged genes:
-  - [ ] heavy-tailed residual sensitivity (if feasible in chosen tooling)
-  - [ ] 2-component mixture on guide slopes (good vs bad) with posterior guide weights
+- [x] Define “flagged gene” criteria from rubric (thresholds + rationale + configurability).
+- [x] Optional targeted models for flagged genes:
+  - [x] heavy-tailed sensitivity on per-guide slopes (t-meta IRLS; weights returned per guide)
+  - [x] 2-component mixture on per-guide slopes (good vs bad) with posterior guide weights
 - [x] Output spec:
   - [x] `PMD_std_res_gene_qc.tsv`
-  - [ ] optional: `PMD_std_res_gene_mixture.tsv`, `PMD_std_res_gene_guide_details.tsv`
+  - [x] optional: `PMD_std_res_gene_flagged.tsv`
+  - [x] optional: `PMD_std_res_gene_mixture.tsv`, `PMD_std_res_gene_mixture_guides.tsv`
+  - [x] optional: `PMD_std_res_gene_tmeta.tsv`, `PMD_std_res_gene_tmeta_guides.tsv`
 
 #### P3.6 — Figures (Add-on only)
 - [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
@@ -198,7 +200,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-level` / `--no-gene-level`
   - [x] `--focal-vars ...`
   - [x] `--gene-id-col ...`
-  - [x] `--gene-methods ...` (currently supports: `meta`, `lmm`, `qc`)
+  - [x] `--gene-methods ...` (supports: `meta`, `lmm`, `qc`, `flagged`, `mixture`, `tmeta`)
   - [x] `--gene-out-dir ...`
   - [x] `--gene-figures` / `--no-gene-figures`, `--gene-figures-dir`, and `--gene-forest-genes`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
