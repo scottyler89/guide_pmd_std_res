@@ -232,6 +232,37 @@ Signal power check:
      --treatment-depth-multiplier 2.0 \
      --no-include-batch-covariate
 
+Selection policy tradeoffs (power vs runtime)
+--------------------------------------------
+
+To evaluate Plan A selection-policy tradeoffs, sweep ``--lmm-scope`` and ``--lmm-max-genes-per-focal-var`` (and optionally
+``--lmm-audit-n``) while holding the generative scenario fixed.
+
+Example (signal scenario; compares full LMM vs selected/capped LMM):
+
+.. code-block:: bash
+
+   python scripts/run_count_depth_grid.py \
+     --out-dir .tmp/pmd_proto/selection_tradeoff \
+     --seeds 1 \
+     --n-genes 200 \
+     --response-mode pmd_std_res --pmd-n-boot 10 \
+     --methods meta lmm \
+     --frac-signal 0.2 --effect-sd 0.5 \
+     --treatment-depth-multiplier 2.0 \
+     --include-depth-covariate \
+     --lmm-scope all meta_or_het_fdr \
+     --lmm-audit-n 0 50 \
+     --lmm-max-genes-per-focal-var 0 100
+
+Then generate the tradeoff plots (including selection-runtime/power vs cap):
+
+.. code-block:: bash
+
+   python scripts/plot_count_depth_grid_summary.py \
+     --grid-tsv .tmp/pmd_proto/selection_tradeoff/count_depth_grid_summary.tsv \
+     --out-dir  .tmp/pmd_proto/selection_tradeoff/fig_summary
+
 Notes:
 
 - When ``--lmm-scope != all``, Plan A fits only a selected subset of genes; confusion-matrix metrics treat non-fit genes as “not called”.
