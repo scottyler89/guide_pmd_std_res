@@ -349,7 +349,7 @@ def pmd_std_res_and_stats(input_file,
 
         if gene_level:
             if gene_methods is None:
-                gene_methods = ["meta", "lmm", "qc"]
+                gene_methods = ["meta", "lmm", "qc", "flagged", "mixture", "tmeta"]
             if gene_out_dir is None:
                 gene_out_dir = os.path.join(output_dir, "gene_level")
             from . import gene_level as gene_level_mod
@@ -367,9 +367,14 @@ def pmd_std_res_and_stats(input_file,
             gene_lmm_selection = None
             gene_lmm = None
             gene_qc = None
+            gene_flagged = None
+            gene_mixture = None
+            gene_mixture_guides = None
+            gene_tmeta = None
+            gene_tmeta_guides = None
             per_guide_ols = None
 
-            needs_per_guide_ols = ("meta" in gene_methods) or ("lmm" in gene_methods) or ("qc" in gene_methods) or (
+            needs_per_guide_ols = any(m in gene_methods for m in ["meta", "lmm", "qc", "flagged", "mixture", "tmeta"]) or (
                 gene_figures and (gene_forest_genes is not None and len(gene_forest_genes) > 0)
             )
             if needs_per_guide_ols:
@@ -381,7 +386,7 @@ def pmd_std_res_and_stats(input_file,
                     add_intercept=gene_add_intercept,
                 )
 
-            needs_gene_meta = ("meta" in gene_methods) or ("lmm" in gene_methods)
+            needs_gene_meta = any(m in gene_methods for m in ["meta", "lmm", "flagged", "mixture", "tmeta"])
             if needs_gene_meta:
                 gene_meta = gene_level_mod.compute_gene_meta(
                     gene_response,
@@ -443,7 +448,8 @@ def pmd_std_res_and_stats(input_file,
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
                 gene_lmm.to_csv(gene_out_path, sep="\t", index=False)
-            if "qc" in gene_methods:
+            needs_gene_qc = any(m in gene_methods for m in ["qc", "flagged", "mixture", "tmeta"])
+            if needs_gene_qc:
                 from . import gene_level_qc as gene_level_qc_mod
 
                 gene_qc = gene_level_qc_mod.compute_gene_qc(
@@ -456,9 +462,72 @@ def pmd_std_res_and_stats(input_file,
                     residual_matrix=resids_df,
                     per_guide_ols=per_guide_ols,
                 )
+                if "qc" in gene_methods:
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_qc.tsv")
+                    gene_qc.to_csv(gene_out_path, sep="\t", index=False)
+
+            needs_flag_table = any(m in gene_methods for m in ["flagged", "mixture", "tmeta"])
+            if needs_flag_table:
+                from . import gene_level_flagging as gene_level_flagging_mod
+
+                if gene_meta is None:
+                    raise RuntimeError("internal error: gene_meta is required for gene flagging")  # pragma: no cover
+                if gene_qc is None:
+                    raise RuntimeError("internal error: gene_qc is required for gene flagging")  # pragma: no cover
+
+                flag_cfg = gene_level_flagging_mod.GeneFlaggingConfig()
+                flag_cfg.validate()
+                gene_flagged = gene_level_flagging_mod.compute_gene_flag_table(gene_meta, gene_qc, config=flag_cfg)
+
+                if "flagged" in gene_methods:
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_flagged.tsv")
+                    gene_flagged.to_csv(gene_out_path, sep="\t", index=False)
+
+            if "mixture" in gene_methods:
+                from . import gene_level_mixture as gene_level_mixture_mod
+
+                if per_guide_ols is None:
+                    raise RuntimeError("internal error: per_guide_ols is required for mixture")  # pragma: no cover
+                cfg = gene_level_mixture_mod.GeneMixtureConfig(scope="flagged")
+                cfg.validate()
+                gene_mixture, gene_mixture_guides = gene_level_mixture_mod.compute_gene_mixture(
+                    per_guide_ols,
+                    annotation_table,
+                    focal_vars=focal_vars,
+                    gene_id_col=gene_id_col,
+                    meta_results=gene_meta,
+                    flag_table=gene_flagged,
+                    config=cfg,
+                )
                 os.makedirs(gene_out_dir, exist_ok=True)
-                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_qc.tsv")
-                gene_qc.to_csv(gene_out_path, sep="\t", index=False)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_mixture.tsv")
+                gene_mixture.to_csv(gene_out_path, sep="\t", index=False)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_mixture_guides.tsv")
+                gene_mixture_guides.to_csv(gene_out_path, sep="\t", index=False)
+
+            if "tmeta" in gene_methods:
+                from . import gene_level_tmeta as gene_level_tmeta_mod
+
+                if per_guide_ols is None:
+                    raise RuntimeError("internal error: per_guide_ols is required for tmeta")  # pragma: no cover
+                cfg = gene_level_tmeta_mod.GeneTMetaConfig(scope="flagged")
+                cfg.validate()
+                gene_tmeta, gene_tmeta_guides = gene_level_tmeta_mod.compute_gene_tmeta(
+                    per_guide_ols,
+                    annotation_table,
+                    focal_vars=focal_vars,
+                    gene_id_col=gene_id_col,
+                    meta_results=gene_meta,
+                    flag_table=gene_flagged,
+                    config=cfg,
+                )
+                os.makedirs(gene_out_dir, exist_ok=True)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_tmeta.tsv")
+                gene_tmeta.to_csv(gene_out_path, sep="\t", index=False)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_tmeta_guides.tsv")
+                gene_tmeta_guides.to_csv(gene_out_path, sep="\t", index=False)
 
             if gene_figures:
                 from . import gene_level_figures as gene_level_figures_mod
@@ -503,6 +572,12 @@ def pmd_std_res_and_stats(input_file,
                     msg_parts.append(f"lmm={gene_lmm.shape[0]}")
                 if gene_qc is not None:
                     msg_parts.append(f"qc={gene_qc.shape[0]}")
+                if gene_flagged is not None:
+                    msg_parts.append(f"flagged={int(gene_flagged['flagged'].sum())}/{gene_flagged.shape[0]}")
+                if gene_mixture is not None:
+                    msg_parts.append(f"mixture={gene_mixture.shape[0]}")
+                if gene_tmeta is not None:
+                    msg_parts.append(f"tmeta={gene_tmeta.shape[0]}")
                 if msg_parts:
                     print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})")
                 if gene_lmm_selection is not None and (not gene_lmm_selection.empty):
@@ -589,8 +664,8 @@ def main():
         dest="gene_methods",
         type=str,
         nargs="+",
-        default=["meta", "lmm", "qc"],
-        help="Gene-level methods to run (default: meta lmm qc).",
+        default=["meta", "lmm", "qc", "flagged", "mixture", "tmeta"],
+        help="Gene-level methods to run (default: meta lmm qc flagged mixture tmeta).",
     )
     parser.add_argument(
         "--gene-out-dir",
