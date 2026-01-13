@@ -263,6 +263,31 @@ Then generate the tradeoff plots (including selection-runtime/power vs cap):
      --grid-tsv .tmp/pmd_proto/selection_tradeoff/count_depth_grid_summary.tsv \
      --out-dir  .tmp/pmd_proto/selection_tradeoff/fig_summary
 
+Off-target contamination stress test
+-----------------------------------
+
+To stress robustness to guide contamination, sweep ``offtarget_guide_frac`` and ``offtarget_slope_sd``.
+
+Example (gene-level null, but with off-target guides present):
+
+.. code-block:: bash
+
+   python scripts/run_count_depth_grid.py \
+     --out-dir .tmp/pmd_proto/offtarget_null \
+     --seeds 1 \
+     --n-genes 500 \
+     --response-mode pmd_std_res --pmd-n-boot 10 \
+     --methods meta lmm qc \
+     --frac-signal 0.0 \
+     --offtarget-guide-frac 0.00 0.05 0.10 \
+     --offtarget-slope-sd 0.00 0.20 0.50 \
+     --treatment-depth-multiplier 1.0 \
+     --include-depth-covariate \
+     --lmm-scope meta_or_het_fdr --lmm-audit-n 50 --lmm-max-genes-per-focal-var 150
+
+Interpretation reminder: in this scenario, ``is_signal`` is still defined by the *gene-level* effect (``theta_gene != 0``).
+Detections driven by off-target guides will appear as “false positives” in the confusion matrix relative to ``is_signal``.
+
 Notes:
 
 - When ``--lmm-scope != all``, Plan A fits only a selected subset of genes; confusion-matrix metrics treat non-fit genes as “not called”.
