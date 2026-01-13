@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -8,6 +9,11 @@ import sys
 from itertools import product
 
 import pandas as pd
+
+
+def _stable_hash(obj: object) -> str:
+    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()[:12]
 
 
 def _run_one(cmd: list[str]) -> str:
@@ -108,14 +114,21 @@ def main() -> None:
         "--lmm-scope",
         type=str,
         choices=["all", "meta_fdr", "meta_or_het_fdr", "none"],
-        default="all",
-        help="Plan A (LMM) gene selection policy (default: all).",
+        nargs="+",
+        default=["all"],
+        help="Plan A (LMM) gene selection policy values to sweep (default: all).",
     )
-    parser.add_argument("--lmm-q-meta", type=float, default=0.1, help="LMM selection q_meta (default: 0.1).")
-    parser.add_argument("--lmm-q-het", type=float, default=0.1, help="LMM selection q_het (default: 0.1).")
-    parser.add_argument("--lmm-audit-n", type=int, default=50, help="LMM selection audit_n (default: 50).")
+    parser.add_argument("--lmm-q-meta", type=float, nargs="+", default=[0.1], help="LMM selection q_meta values to sweep (default: 0.1).")
+    parser.add_argument("--lmm-q-het", type=float, nargs="+", default=[0.1], help="LMM selection q_het values to sweep (default: 0.1).")
+    parser.add_argument("--lmm-audit-n", type=int, nargs="+", default=[50], help="LMM selection audit_n values to sweep (default: 50).")
     parser.add_argument("--lmm-audit-seed", type=int, default=123456, help="LMM selection audit_seed (default: 123456).")
-    parser.add_argument("--lmm-max-genes-per-focal-var", type=int, default=None, help="LMM selection cap (default: None).")
+    parser.add_argument(
+        "--lmm-max-genes-per-focal-var",
+        type=int,
+        nargs="+",
+        default=[0],
+        help="LMM selection cap values to sweep; use 0 for None/unlimited (default: 0).",
+    )
     parser.add_argument(
         "--frac-signal",
         type=float,
@@ -153,6 +166,11 @@ def main() -> None:
         tdm,
         include_depth,
         include_batch,
+        lmm_scope,
+        lmm_q_meta,
+        lmm_q_het,
+        lmm_audit_n,
+        lmm_max_genes,
         frac_signal,
         effect_sd,
         guide_slope_sd,
@@ -171,6 +189,11 @@ def main() -> None:
         [float(x) for x in args.treatment_depth_multiplier],
         include_depth_opts,
         include_batch_opts,
+        [str(x) for x in args.lmm_scope],
+        [float(x) for x in args.lmm_q_meta],
+        [float(x) for x in args.lmm_q_het],
+        [int(x) for x in args.lmm_audit_n],
+        [int(x) for x in args.lmm_max_genes_per_focal_var],
         [float(x) for x in args.frac_signal],
         [float(x) for x in args.effect_sd],
         [float(x) for x in args.guide_slope_sd],
@@ -180,26 +203,54 @@ def main() -> None:
         [float(x) for x in args.offtarget_slope_sd],
         [float(x) for x in args.nb_overdispersion],
     ):
+        lmm_max_genes_opt = None if int(lmm_max_genes) == 0 else int(lmm_max_genes)
+        cap_tag = 0 if lmm_max_genes_opt is None else int(lmm_max_genes_opt)
+
+        full_cfg = {
+            "seed": seed,
+            "response_mode": str(args.response_mode),
+            "pmd_n_boot": int(args.pmd_n_boot),
+            "n_genes": n_genes,
+            "guides_per_gene": int(args.guides_per_gene),
+            "n_control": int(args.n_control),
+            "n_treatment": int(args.n_treatment),
+            "guide_lambda_log_mean": float(args.guide_lambda_log_mean),
+            "guide_lambda_log_sd": float(guide_lambda_log_sd),
+            "gene_lambda_log_sd": float(gene_lambda_log_sd),
+            "depth_log_sd": depth_log_sd,
+            "n_batches": int(n_batches),
+            "batch_confounding_strength": float(batch_strength),
+            "batch_depth_log_sd": float(batch_depth_log_sd),
+            "treatment_depth_multiplier": tdm,
+            "include_depth_covariate": bool(include_depth),
+            "include_batch_covariate": bool(include_batch),
+            "lmm_scope": str(lmm_scope),
+            "lmm_q_meta": float(lmm_q_meta),
+            "lmm_q_het": float(lmm_q_het),
+            "lmm_audit_n": int(lmm_audit_n),
+            "lmm_audit_seed": int(args.lmm_audit_seed),
+            "lmm_max_genes_per_focal_var": lmm_max_genes_opt,
+            "frac_signal": float(frac_signal),
+            "effect_sd": float(effect_sd),
+            "guide_slope_sd": float(guide_slope_sd),
+            "offtarget_guide_frac": float(ot_frac),
+            "offtarget_slope_sd": float(ot_sd),
+            "nb_overdispersion": float(nb_overdispersion),
+            "alpha": 0.05,
+            "fdr_q": 0.1,
+        }
+        run_hash = _stable_hash(full_cfg)
+
+        # Keep the directory name short to avoid filesystem path limits.
         tag = (
-            f"seed={seed}"
+            f"s={seed}"
             f"__rm={args.response_mode}"
-            f"__pmdnb={int(args.pmd_n_boot)}"
-            f"__n_genes={n_genes}"
-            f"__dlsd={depth_log_sd}"
-            f"__nbatch={int(n_batches)}"
-            f"__bcs={batch_strength}"
-            f"__bdlsd={batch_depth_log_sd}"
+            f"__ng={n_genes}"
             f"__tdm={tdm}"
-            f"__depthcov={int(include_depth)}"
-            f"__batchcov={int(include_batch)}"
             f"__fs={frac_signal}"
-            f"__esd={effect_sd}"
-            f"__gssd={guide_slope_sd}"
-            f"__gllsd={gene_lambda_log_sd}"
-            f"__gllsd_within={guide_lambda_log_sd}"
-            f"__otf={ot_frac}"
-            f"__otsd={ot_sd}"
-            f"__nbphi={nb_overdispersion}"
+            f"__lmm={lmm_scope}"
+            f"__cap={cap_tag}"
+            f"__h={run_hash}"
         )
         run_dir = os.path.join(args.out_dir, tag)
         cmd = [
@@ -254,18 +305,18 @@ def main() -> None:
             "--max-iter",
             str(int(args.max_iter)),
             "--lmm-scope",
-            str(args.lmm_scope),
+            str(lmm_scope),
             "--lmm-q-meta",
-            str(float(args.lmm_q_meta)),
+            str(float(lmm_q_meta)),
             "--lmm-q-het",
-            str(float(args.lmm_q_het)),
+            str(float(lmm_q_het)),
             "--lmm-audit-n",
-            str(int(args.lmm_audit_n)),
+            str(int(lmm_audit_n)),
             "--lmm-audit-seed",
             str(int(args.lmm_audit_seed)),
         ]
-        if args.lmm_max_genes_per_focal_var is not None:
-            cmd += ["--lmm-max-genes-per-focal-var", str(int(args.lmm_max_genes_per_focal_var))]
+        if lmm_max_genes_opt is not None:
+            cmd += ["--lmm-max-genes-per-focal-var", str(int(lmm_max_genes_opt))]
         if include_depth:
             cmd.append("--include-depth-covariate")
         cmd.append("--include-batch-covariate" if include_batch else "--no-include-batch-covariate")
