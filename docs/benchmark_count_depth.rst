@@ -9,6 +9,7 @@ The main entry points are:
 - ``scripts/benchmark_count_depth.py`` (single-run benchmark; writes a full artifact bundle + strict JSON report)
 - ``scripts/run_count_depth_grid.py`` (parameter sweep runner; writes ``count_depth_grid_summary.tsv``)
 - ``scripts/plot_count_depth_grid_summary.py`` (summary figures from the grid TSV)
+- ``scripts/aggregate_count_depth_grid_summary.py`` (aggregate grid results across seeds)
 
 
 Generative Model (High-Level)
@@ -193,6 +194,13 @@ Then plot summary figures:
    python scripts/plot_count_depth_grid_summary.py \
      --grid-tsv .tmp/pmd_proto/null_depth/count_depth_grid_summary.tsv \
      --out-dir  .tmp/pmd_proto/null_depth/fig_summary
+
+Optionally aggregate across seeds (useful when ``--seeds`` has multiple values):
+
+.. code-block:: bash
+
+   python scripts/aggregate_count_depth_grid_summary.py \
+     --grid-tsv .tmp/pmd_proto/null_depth/count_depth_grid_summary.tsv
 
 Batch confounding stress test:
 
