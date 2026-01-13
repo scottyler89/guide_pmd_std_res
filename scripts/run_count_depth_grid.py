@@ -256,6 +256,8 @@ def main() -> None:
             "seed": seed,
             "pmd_n_boot": int(report["config"]["pmd_n_boot"]),
             "qq_plots": bool(report["config"]["qq_plots"]),
+            "alpha": float(report["config"]["alpha"]),
+            "fdr_q": float(report["config"]["fdr_q"]),
             "n_genes": n_genes,
             "guides_per_gene": int(report["config"]["guides_per_gene"]),
             "depth_log_sd": depth_log_sd,
