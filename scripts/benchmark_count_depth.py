@@ -65,6 +65,13 @@ class CountDepthBenchmarkConfig:
     allow_random_slope: bool
     min_guides_random_slope: int
     max_iter: int
+    # Plan A (LMM) selection policy (mirrors the main pipeline defaults).
+    lmm_scope: str
+    lmm_q_meta: float
+    lmm_q_het: float
+    lmm_audit_n: int
+    lmm_audit_seed: int
+    lmm_max_genes_per_focal_var: int | None
     methods: tuple[str, ...]
     seed: int
     alpha: float
@@ -113,6 +120,18 @@ class CountDepthBenchmarkConfig:
             raise ValueError("min_guides_random_slope must be >= 2")
         if self.max_iter <= 0:
             raise ValueError("max_iter must be > 0")
+        if str(self.lmm_scope) not in {"all", "meta_fdr", "meta_or_het_fdr", "none"}:
+            raise ValueError("lmm_scope must be one of: all, meta_fdr, meta_or_het_fdr, none")
+        if not (0.0 < float(self.lmm_q_meta) <= 1.0):
+            raise ValueError("lmm_q_meta must be in (0, 1]")
+        if not (0.0 < float(self.lmm_q_het) <= 1.0):
+            raise ValueError("lmm_q_het must be in (0, 1]")
+        if int(self.lmm_audit_n) < 0:
+            raise ValueError("lmm_audit_n must be >= 0")
+        if int(self.lmm_audit_seed) < 0:
+            raise ValueError("lmm_audit_seed must be >= 0")
+        if self.lmm_max_genes_per_focal_var is not None and int(self.lmm_max_genes_per_focal_var) < 1:
+            raise ValueError("lmm_max_genes_per_focal_var must be >= 1 or None")
         if not self.methods:
             raise ValueError("methods must not be empty")
         allowed_methods = {"meta", "lmm", "qc"}
@@ -526,7 +545,8 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     qc_df = pd.DataFrame()
 
     meta_out_path = os.path.join(out_dir, "PMD_std_res_gene_meta.tsv")
-    if "meta" in cfg.methods:
+    meta_needed_for_lmm = ("lmm" in cfg.methods) and (str(cfg.lmm_scope) != "all")
+    if ("meta" in cfg.methods) or meta_needed_for_lmm:
         t0 = time.perf_counter()
         meta_df = compute_gene_meta(
             std_res_df,
@@ -540,7 +560,37 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         meta_df.to_csv(meta_out_path, sep="\t", index=False)
 
     lmm_out_path = os.path.join(out_dir, "PMD_std_res_gene_lmm.tsv")
+    lmm_sel_out_path = os.path.join(out_dir, "PMD_std_res_gene_lmm_selection.tsv")
+    lmm_selection: pd.DataFrame | None = None
     if "lmm" in cfg.methods:
+        if str(cfg.lmm_scope) != "all":
+            if meta_df.empty:
+                raise RuntimeError("internal error: meta_df is required for lmm selection but is empty")
+            from guide_pmd import gene_level_selection as gene_level_selection_mod
+
+            sel_cfg = gene_level_selection_mod.GeneLmmSelectionConfig(
+                scope=str(cfg.lmm_scope),
+                q_meta=float(cfg.lmm_q_meta),
+                q_het=float(cfg.lmm_q_het),
+                audit_n=int(cfg.lmm_audit_n),
+                audit_seed=int(cfg.lmm_audit_seed),
+                max_genes_per_focal_var=cfg.lmm_max_genes_per_focal_var,
+            )
+            feasibility = gene_level_selection_mod.compute_gene_lmm_feasibility(
+                std_res_df,
+                ann_df,
+                mm,
+                focal_vars=focal_vars,
+                gene_id_col=1,
+                add_intercept=True,
+            )
+            lmm_selection = gene_level_selection_mod.compute_gene_lmm_selection(
+                meta_df,
+                feasibility,
+                config=sel_cfg,
+            )
+            lmm_selection.to_csv(lmm_sel_out_path, sep="\t", index=False)
+
         t0 = time.perf_counter()
         lmm_df = compute_gene_lmm(
             std_res_df,
@@ -553,6 +603,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             min_guides_random_slope=int(cfg.min_guides_random_slope),
             max_iter=int(cfg.max_iter),
             fallback_to_meta=False,
+            selection_table=lmm_selection,
         )
         runtime["lmm"] = float(time.perf_counter() - t0)
         lmm_df.to_csv(lmm_out_path, sep="\t", index=False)
@@ -596,8 +647,9 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "truth_sample_tsv": truth_sample_path,
             "truth_gene_tsv": truth_path,
             "truth_guide_tsv": truth_guide_path,
-            "gene_meta_tsv": meta_out_path if "meta" in cfg.methods else "",
+            "gene_meta_tsv": meta_out_path if not meta_df.empty else "",
             "gene_lmm_tsv": lmm_out_path if "lmm" in cfg.methods else "",
+            "gene_lmm_selection_tsv": lmm_sel_out_path if lmm_selection is not None else "",
             "gene_qc_tsv": qc_out_path if "qc" in cfg.methods else "",
         },
         "runtime_sec": runtime,
@@ -748,6 +800,23 @@ def main() -> None:
     parser.add_argument("--allow-random-slope", action=argparse.BooleanOptionalAction, default=True, help="Allow random slope in LMM (default: True).")
     parser.add_argument("--min-guides-random-slope", type=int, default=3, help="Minimum guides for RI+RS (default: 3).")
     parser.add_argument("--max-iter", type=int, default=200, help="Max iterations per MixedLM fit (default: 200).")
+    parser.add_argument(
+        "--lmm-scope",
+        type=str,
+        choices=["all", "meta_fdr", "meta_or_het_fdr", "none"],
+        default="all",
+        help="Plan A (LMM) gene selection policy (default: all).",
+    )
+    parser.add_argument("--lmm-q-meta", type=float, default=0.1, help="LMM selection: meta FDR threshold q_meta (default: 0.1).")
+    parser.add_argument("--lmm-q-het", type=float, default=0.1, help="LMM selection: heterogeneity FDR threshold q_het (default: 0.1).")
+    parser.add_argument("--lmm-audit-n", type=int, default=50, help="LMM selection: audit sample size (default: 50).")
+    parser.add_argument("--lmm-audit-seed", type=int, default=123456, help="LMM selection: audit seed (default: 123456).")
+    parser.add_argument(
+        "--lmm-max-genes-per-focal-var",
+        type=int,
+        default=None,
+        help="LMM selection: cap selected genes per focal var (default: None).",
+    )
     parser.add_argument("--seed", type=int, default=123, help="RNG seed.")
     parser.add_argument("--alpha", type=float, default=0.05, help="Alpha for summary metrics.")
     parser.add_argument("--fdr-q", type=float, default=0.1, help="FDR threshold for summary metrics.")
@@ -797,6 +866,12 @@ def main() -> None:
         allow_random_slope=bool(args.allow_random_slope),
         min_guides_random_slope=args.min_guides_random_slope,
         max_iter=args.max_iter,
+        lmm_scope=str(args.lmm_scope),
+        lmm_q_meta=float(args.lmm_q_meta),
+        lmm_q_het=float(args.lmm_q_het),
+        lmm_audit_n=int(args.lmm_audit_n),
+        lmm_audit_seed=int(args.lmm_audit_seed),
+        lmm_max_genes_per_focal_var=args.lmm_max_genes_per_focal_var,
         methods=tuple([str(m) for m in args.methods]),
         seed=args.seed,
         alpha=args.alpha,

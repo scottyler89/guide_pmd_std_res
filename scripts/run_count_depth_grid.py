@@ -105,6 +105,18 @@ def main() -> None:
     )
     parser.add_argument("--methods", type=str, nargs="+", choices=["meta", "lmm", "qc"], default=["meta", "qc"])
     parser.add_argument(
+        "--lmm-scope",
+        type=str,
+        choices=["all", "meta_fdr", "meta_or_het_fdr", "none"],
+        default="all",
+        help="Plan A (LMM) gene selection policy (default: all).",
+    )
+    parser.add_argument("--lmm-q-meta", type=float, default=0.1, help="LMM selection q_meta (default: 0.1).")
+    parser.add_argument("--lmm-q-het", type=float, default=0.1, help="LMM selection q_het (default: 0.1).")
+    parser.add_argument("--lmm-audit-n", type=int, default=50, help="LMM selection audit_n (default: 50).")
+    parser.add_argument("--lmm-audit-seed", type=int, default=123456, help="LMM selection audit_seed (default: 123456).")
+    parser.add_argument("--lmm-max-genes-per-focal-var", type=int, default=None, help="LMM selection cap (default: None).")
+    parser.add_argument(
         "--frac-signal",
         type=float,
         nargs="+",
@@ -241,7 +253,19 @@ def main() -> None:
             *[str(m) for m in args.methods],
             "--max-iter",
             str(int(args.max_iter)),
+            "--lmm-scope",
+            str(args.lmm_scope),
+            "--lmm-q-meta",
+            str(float(args.lmm_q_meta)),
+            "--lmm-q-het",
+            str(float(args.lmm_q_het)),
+            "--lmm-audit-n",
+            str(int(args.lmm_audit_n)),
+            "--lmm-audit-seed",
+            str(int(args.lmm_audit_seed)),
         ]
+        if args.lmm_max_genes_per_focal_var is not None:
+            cmd += ["--lmm-max-genes-per-focal-var", str(int(args.lmm_max_genes_per_focal_var))]
         if include_depth:
             cmd.append("--include-depth-covariate")
         cmd.append("--include-batch-covariate" if include_batch else "--no-include-batch-covariate")
@@ -272,6 +296,12 @@ def main() -> None:
             "guide_lambda_log_sd": float(report["config"]["guide_lambda_log_sd"]),
             "gene_lambda_log_sd": float(report["config"]["gene_lambda_log_sd"]),
             "methods": ",".join(report["config"]["methods"]),
+            "lmm_scope": str(report["config"]["lmm_scope"]),
+            "lmm_q_meta": float(report["config"]["lmm_q_meta"]),
+            "lmm_q_het": float(report["config"]["lmm_q_het"]),
+            "lmm_audit_n": int(report["config"]["lmm_audit_n"]),
+            "lmm_audit_seed": int(report["config"]["lmm_audit_seed"]),
+            "lmm_max_genes_per_focal_var": report["config"]["lmm_max_genes_per_focal_var"],
             "frac_signal": float(report["config"]["frac_signal"]),
             "effect_sd": float(report["config"]["effect_sd"]),
             "guide_slope_sd": float(report["config"]["guide_slope_sd"]),
@@ -336,6 +366,11 @@ def main() -> None:
         "treatment_depth_multiplier",
         "include_depth_covariate",
         "include_batch_covariate",
+        "lmm_scope",
+        "lmm_q_meta",
+        "lmm_q_het",
+        "lmm_audit_n",
+        "lmm_audit_seed",
         "frac_signal",
         "effect_sd",
         "guide_slope_sd",
