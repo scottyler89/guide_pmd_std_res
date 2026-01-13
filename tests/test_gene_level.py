@@ -100,3 +100,64 @@ def test_compute_gene_meta_groups_and_fdr(monkeypatch):
 
     assert out["p_adj"].between(0.0, 1.0).all()
     assert out["Q_p_adj"].between(0.0, 1.0).all()
+
+
+def test_compute_gene_meta_Q_p_edge_cases_m0_m1_m2():
+    # This test exercises heterogeneity Q-stat edge cases:
+    # - m_used=0 (all invalid SEs) -> Q_p is NaN; Q_p_adj is 1.0 after nan-aware FDR.
+    # - m_used=1 -> Q_df=0 and Q_p is NaN; Q_p_adj is 1.0.
+    # - m_used=2 -> Q is finite; Q_p is finite (and 1.0 when betas match).
+    response = pd.DataFrame(
+        {"s1": [0.0, 0.0, 0.0, 0.0, 0.0], "s2": [0.0, 0.0, 0.0, 0.0, 0.0]},
+        index=["g0a", "g0b", "g1", "g2", "g2_b"],
+    )
+    annotation_table = pd.DataFrame(
+        {"gene": ["G0", "G0", "G1", "G2", "G2"]},
+        index=["g0a", "g0b", "g1", "g2", "g2_b"],
+    )
+    model_matrix = pd.DataFrame({"treatment": [0.0, 1.0]}, index=["s1", "s2"])
+
+    per_guide = pd.DataFrame(
+        [
+            # G0: all invalid (se=0) => m_used=0
+            {"guide_id": "g0a", "focal_var": "treatment", "beta": 0.1, "se": 0.0},
+            {"guide_id": "g0b", "focal_var": "treatment", "beta": -0.1, "se": 0.0},
+            # G1: single guide => m_used=1
+            {"guide_id": "g1", "focal_var": "treatment", "beta": 0.2, "se": 0.1},
+            # G2: two guides, identical betas => Q=0 => Q_p=1
+            {"guide_id": "g2", "focal_var": "treatment", "beta": 0.3, "se": 0.1},
+            {"guide_id": "g2_b", "focal_var": "treatment", "beta": 0.3, "se": 0.1},
+        ]
+    )
+
+    out = gl.compute_gene_meta(
+        response,
+        annotation_table,
+        model_matrix,
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        add_intercept=True,
+        per_guide_ols=per_guide,
+    )
+
+    row_g0 = out.loc[out["gene_id"] == "G0"].iloc[0]
+    assert row_g0["m_guides_total"] == 2.0
+    assert row_g0["m_guides_used"] == 0.0
+    assert np.isnan(row_g0["Q_p"])
+    assert row_g0["Q_p_adj"] == 1.0
+
+    row_g1 = out.loc[out["gene_id"] == "G1"].iloc[0]
+    assert row_g1["m_guides_total"] == 1.0
+    assert row_g1["m_guides_used"] == 1.0
+    assert row_g1["Q_df"] == 0.0
+    assert np.isnan(row_g1["Q_p"])
+    assert row_g1["Q_p_adj"] == 1.0
+
+    row_g2 = out.loc[out["gene_id"] == "G2"].iloc[0]
+    assert row_g2["m_guides_total"] == 2.0
+    assert row_g2["m_guides_used"] == 2.0
+    assert row_g2["Q_df"] == 1.0
+    assert np.isfinite(row_g2["Q"])
+    assert np.isfinite(row_g2["Q_p"])
+    assert np.isclose(row_g2["Q"], 0.0)
+    assert np.isclose(row_g2["Q_p"], 1.0)
