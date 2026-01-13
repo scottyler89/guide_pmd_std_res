@@ -361,7 +361,7 @@ def pmd_std_res_and_stats(input_file,
             if focal_vars is None or len(focal_vars) == 0:
                 focal_vars = [c for c in gene_mm.columns.tolist() if c != "Intercept"]
             if len(focal_vars) == 0:
-                print("gene-level: skipping (no focal vars; model matrix appears to contain only an intercept)")
+                print("gene-level: skipping (no focal vars; model matrix appears to contain only an intercept)", flush=True)
                 return std_res, stats_df, resids_df, comb_stats
 
             gene_meta = None
@@ -451,6 +451,20 @@ def pmd_std_res_and_stats(input_file,
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
                 gene_lmm.to_csv(gene_out_path, sep="\t", index=False)
+
+                # A full (all genes) Plan A summary table that explicitly separates
+                # Plan B meta columns from Plan A LMM columns (no conflation of LRT vs Wald).
+                full = gene_lmm_selection.copy()
+                meta_cols = ["theta", "se_theta", "p", "p_adj", "Q_p", "Q_p_adj", "m_guides_used"]
+                rename_meta = {c: f"meta_{c}" for c in meta_cols if c in full.columns}
+                full = full.rename(columns=rename_meta)
+                if gene_lmm is not None and (not gene_lmm.empty):
+                    lmm = gene_lmm.copy()
+                    lmm_cols = [c for c in lmm.columns if c not in {"gene_id", "focal_var"}]
+                    lmm = lmm.rename(columns={c: f"lmm_{c}" for c in lmm_cols})
+                    full = full.merge(lmm, on=["gene_id", "focal_var"], how="left", validate="one_to_one", sort=False)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_full.tsv")
+                full.to_csv(gene_out_path, sep="\t", index=False)
             needs_gene_qc = any(m in gene_methods for m in ["qc", "flagged", "mixture", "tmeta"])
             if needs_gene_qc:
                 from . import gene_level_qc as gene_level_qc_mod
@@ -548,10 +562,10 @@ def pmd_std_res_and_stats(input_file,
                     )
                 except ImportError as exc:
                     figures_ok = False
-                    print(f"gene-level figures: skipped ({exc})")
+                    print(f"gene-level figures: skipped ({exc})", flush=True)
                 if gene_forest_genes is not None and len(gene_forest_genes) > 0:
                     if not figures_ok:
-                        print("gene-level forest plots: skipped (matplotlib not available)")
+                        print("gene-level forest plots: skipped (matplotlib not available)", flush=True)
                     else:
                         if per_guide_ols is None:
                             raise RuntimeError("internal error: per_guide_ols is required for forest plots")  # pragma: no cover
@@ -582,7 +596,7 @@ def pmd_std_res_and_stats(input_file,
                 if gene_tmeta is not None:
                     msg_parts.append(f"tmeta={gene_tmeta.shape[0]}")
                 if msg_parts:
-                    print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})")
+                    print("gene-level outputs:", ", ".join(msg_parts), f"(dir={gene_out_dir})", flush=True)
                 if gene_lmm_selection is not None and (not gene_lmm_selection.empty):
                     n_total = int(gene_lmm_selection.shape[0])
                     n_feasible = int(gene_lmm_selection["feasible"].sum())
@@ -591,6 +605,7 @@ def pmd_std_res_and_stats(input_file,
                         "gene-level lmm selection:",
                         f"selected={n_selected}/{n_total}",
                         f"(feasible={n_feasible}; scope={gene_lmm_scope}; q_meta={gene_lmm_q_meta}; q_het={gene_lmm_q_het}; audit_n={gene_lmm_audit_n}; cap={gene_lmm_max_genes_per_focal_var})",
+                        flush=True,
                     )
                     reason_counts = (
                         gene_lmm_selection.loc[gene_lmm_selection["selection_reason"] != "", "selection_reason"]
@@ -598,25 +613,25 @@ def pmd_std_res_and_stats(input_file,
                         .to_dict()
                     )
                     if reason_counts:
-                        print("gene-level lmm selection reasons:", reason_counts)
+                        print("gene-level lmm selection reasons:", reason_counts, flush=True)
                     skip_counts = (
                         gene_lmm_selection.loc[gene_lmm_selection["skip_reason"] != "", "skip_reason"]
                         .value_counts(dropna=False)
                         .to_dict()
                     )
                     if skip_counts:
-                        print("gene-level lmm skip reasons:", skip_counts)
+                        print("gene-level lmm skip reasons:", skip_counts, flush=True)
                 if gene_lmm is not None and (not gene_lmm.empty):
                     method_counts = gene_lmm["method"].value_counts(dropna=False).to_dict()
-                    print("gene-level lmm methods:", method_counts)
+                    print("gene-level lmm methods:", method_counts, flush=True)
                     if "lrt_ok" in gene_lmm.columns:
                         lrt_ok_counts = gene_lmm["lrt_ok"].value_counts(dropna=False).to_dict()
-                        print("gene-level lmm lrt_ok:", lrt_ok_counts)
+                        print("gene-level lmm lrt_ok:", lrt_ok_counts, flush=True)
                     if "wald_ok" in gene_lmm.columns:
                         wald_ok_counts = gene_lmm["wald_ok"].value_counts(dropna=False).to_dict()
-                        print("gene-level lmm wald_ok:", wald_ok_counts)
+                        print("gene-level lmm wald_ok:", wald_ok_counts, flush=True)
     elif gene_level:
-        print("gene-level: skipping (requires model_matrix_file)")
+        print("gene-level: skipping (requires model_matrix_file)", flush=True)
     return std_res, stats_df, resids_df, comb_stats
 
 

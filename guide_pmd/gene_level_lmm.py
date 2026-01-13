@@ -501,7 +501,10 @@ def compute_gene_lmm(
 
     if progress and n_total:
         n_unique_genes = len(set([g for _, g in tasks]))
-        print(f"gene-level lmm: fitting {n_total} task(s) ({n_unique_genes} gene(s) x {len(set([f for f, _ in tasks]))} focal var(s))")
+        print(
+            f"gene-level lmm: fitting {n_total} task(s) ({n_unique_genes} gene(s) x {len(set([f for f, _ in tasks]))} focal var(s))",
+            flush=True,
+        )
 
     if n_jobs == 1 or n_total == 0:
         for idx, (focal_var, gene_id) in enumerate(tasks, start=1):
@@ -526,7 +529,10 @@ def compute_gene_lmm(
                     last_print = now
                     rate = idx / max(1e-9, (now - t0))
                     eta_s = (n_total - idx) / max(1e-9, rate)
-                    print(f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)")
+                    print(
+                        f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
+                        flush=True,
+                    )
     else:
         def _fit_one(task: tuple[str, str]) -> dict[str, object]:
             focal_var, gene_id = task
@@ -584,7 +590,10 @@ def compute_gene_lmm(
                         last_print = now
                         rate = idx / max(1e-9, (now - t0))
                         eta_s = (n_total - idx) / max(1e-9, rate)
-                        print(f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)")
+                        print(
+                            f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
+                            flush=True,
+                        )
 
     columns = [
         "gene_id",

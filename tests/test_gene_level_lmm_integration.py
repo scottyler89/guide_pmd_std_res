@@ -120,3 +120,4 @@ def test_gene_level_lmm_wiring_does_not_change_baseline_outputs(tmp_path, monkey
     gene_level_dir = out_gene / "gene_level"
     assert not (gene_level_dir / "PMD_std_res_gene_meta.tsv").exists()
     assert (gene_level_dir / "PMD_std_res_gene_lmm.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm_full.tsv").is_file()

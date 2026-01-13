@@ -119,6 +119,7 @@ Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B opti
   - [x] if RI fails -> fallback to Plan B (explicitly labeled as `meta_fallback`)
 - [x] Output spec:
   - [x] `PMD_std_res_gene_lmm.tsv` (theta, SE, Wald z/p, LRT p, tau, sigma_alpha, model_used, converged, n_samples, m_guides)
+  - [x] `PMD_std_res_gene_lmm_full.tsv` (one row per gene×focal-var; includes `meta_*` + selection fields + `lmm_*` where fit)
 - [x] Multiple testing:
   - [x] compute gene-level FDR for each focal var
 

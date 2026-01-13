@@ -83,6 +83,7 @@ def test_gene_level_defaults_and_opt_out_preserves_baseline(tmp_path, monkeypatc
     assert (out_default / "gene_level" / "PMD_std_res_gene_meta.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_lmm_selection.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_lmm.tsv").is_file()
+    assert (out_default / "gene_level" / "PMD_std_res_gene_lmm_full.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_qc.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_flagged.tsv").is_file()
     assert (out_default / "gene_level" / "PMD_std_res_gene_mixture.tsv").is_file()
