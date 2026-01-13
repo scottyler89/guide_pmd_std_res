@@ -93,6 +93,84 @@ Each run writes a reproducible artifact bundle under ``--out-dir``:
 Recommended Workflows
 ---------------------
 
+Calibration Expectations & Interpretation
+----------------------------------------
+
+This benchmark is designed to answer two different questions:
+
+1) **Statistical calibration**: are p-values approximately Uniform(0,1) under a *true null*?
+2) **Practical robustness**: what happens when real-world assumptions are violated (confounding, contamination, overdispersion)?
+
+Use the settings below to make those questions explicit.
+
+True-null calibration runs (what "should" be uniform)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For null calibration, use a configuration that makes the gene-level truth genuinely null:
+
+- ``--frac-signal 0``
+- ``--offtarget-guide-frac 0`` (no contamination)
+- ``--treatment-depth-multiplier 1`` (no depth confounding) **or** include ``--include-depth-covariate``
+- ``--n-batches 1`` **or** include ``--include-batch-covariate``
+- ``--nb-overdispersion 0`` (Poisson)
+
+Under these settings, you should expect:
+
+- ``lambda_gc`` near 1.0 for null p-values (QQ plots / QQ stats)
+- empirical FPR near ``alpha`` (see the ``confusion_alpha`` block in ``benchmark_report.json``)
+
+Confounding stress tests (what will inflate FPR if you omit covariates)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Depth confounding:
+
+- Set ``--treatment-depth-multiplier 2`` and run with/without ``--include-depth-covariate``.
+- Expect inflated null FPR without the covariate, and improved calibration when it is included.
+
+Batch confounding:
+
+- Set ``--n-batches 2 --batch-confounding-strength 1 --batch-depth-log-sd 0.5`` and run with/without
+  ``--include-batch-covariate``.
+- Expect inflated null FPR without batch indicators, and improved calibration when they are included.
+
+Contamination runs (off-target guides)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When ``--offtarget-guide-frac > 0``, some guides have a nonzero treatment effect even when ``theta_gene=0``.
+In this repo the primary gene-level truth label is:
+
+- ``is_signal`` ⇢ **gene-level effect present** (``theta_gene != 0``)
+
+so under contamination you should interpret “false positives” as “detections driven by off-target behavior”
+rather than a failure of multiple testing per se. For pure calibration, keep off-target disabled.
+
+Overdispersion (Negative Binomial)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When ``--nb-overdispersion > 0``, counts follow a Gamma-Poisson mixture:
+
+- ``Var[count] = mu + nb_overdispersion * mu^2``
+
+This is a realistic stress test for PMD and downstream Gaussian modeling. Use it to compare robustness across methods
+and to see how much overdispersion breaks calibration under each response mode.
+
+Response mode notes
+^^^^^^^^^^^^^^^^^^^
+
+- ``pmd_std_res`` is the intended mode for calibration/power benchmarking of downstream Gaussian methods.
+- ``log_counts`` and ``guide_zscore_log_counts`` are faster stress-test modes; do not assume strict null calibration.
+- For PMD mode, prefer ``--pmd-n-boot >= 10`` (and consider 20+) for stability.
+
+Plan A selection policy (important for interpreting TPR/FPR)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When ``--lmm-scope`` is not ``all``, Plan A (LMM) is fit only on a selected subset of genes. In that case:
+
+- confusion matrices treat **non-fit genes as “not called”**
+- reported TPR/FPR reflect the *pipeline policy* (selection + modeling), not the LMM fit in isolation
+
+To benchmark the LMM method itself (without selection), set ``--lmm-scope all``.
+
 Quick null calibration (PMD mode, depth confounding on/off):
 
 .. code-block:: bash
@@ -150,4 +228,3 @@ Notes:
 
 - When ``--lmm-scope != all``, Plan A fits only a selected subset of genes; confusion-matrix metrics treat non-fit genes as “not called”.
 - For full-method calibration/power (no selection), set ``--lmm-scope all`` (but this can be much slower).
-
