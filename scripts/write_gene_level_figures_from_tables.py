@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +16,10 @@ def _maybe_read_tsv(path: str) -> pd.DataFrame | None:
 
 
 def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
     parser = argparse.ArgumentParser(
         description="Write gene-level figures from precomputed gene-level TSVs (no recomputation)."
     )
@@ -62,7 +67,7 @@ def main() -> None:
     gene_lmm = _maybe_read_tsv(lmm_path)
     gene_qc = _maybe_read_tsv(qc_path)
 
-    from guide_pmd import gene_level_figures as gene_level_figures_mod
+    import guide_pmd.gene_level_figures as gene_level_figures_mod
 
     written = gene_level_figures_mod.write_gene_level_figures(
         figures_dir,
@@ -79,4 +84,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
