@@ -290,6 +290,7 @@ Phase D — Tie benchmark back to selection policy
 #### P4.2 — Depth Covariate Realism (observed-only; no oracle adjustment)
 Goal: ensure the benchmark reflects what we can do in real data, where we only have measured library sizes (count depth).
 
+- [x] Remove oracle adjustment from the benchmark: `--include-depth-covariate` uses `log_libsize_centered = log(colsum(counts))` (not simulated `log_depth`).
 - [ ] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
   - [ ] `none` (no depth adjustment)
   - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible)
