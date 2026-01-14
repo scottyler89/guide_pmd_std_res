@@ -298,32 +298,20 @@ Goal: ensure the benchmark reflects what we can do in real data, where we only h
 - [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
 - [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
-#### P4.3 — Normalization + Response Construction (common-sense baselines)
-Goal: benchmark “common sense” depth-handling strategies end-to-end, not just the model-matrix covariate.
+#### P4.3 — Response Construction (PMD standardized residuals as the normalization)
+Goal: focus benchmark coverage on what we actually run in practice: downstream inference on PMD standardized residuals.
 
-- [ ] Refactor response construction into explicit stages (recorded in JSON):
-  - [ ] `normalization_mode` (acts on counts before log/standardization)
-  - [ ] `transform_mode` (e.g., log)
-  - [ ] `standardize_mode` (e.g., per-guide z-score)
-- [ ] Implement `normalization_mode` options (deterministic; no extra deps):
-  - [ ] `none` (raw counts)
-  - [ ] `cpm` (counts per million by sample libsize)
-  - [ ] `median_ratio` (DESeq-style size factors; robust to composition shifts; document assumptions)
-- [ ] Implement `transform_mode` options:
-  - [ ] `log(count + pseudocount)` (current)
-  - [ ] `log(norm_count + pseudocount)` (applies after normalization)
-- [ ] Implement `standardize_mode` options:
-  - [ ] `none`
-  - [ ] `per_guide_zscore` (current “fast PMD-like surrogate”)
-- [ ] Keep `pmd_std_res` as a separate response branch (PMD runs on the count matrix), but allow applying the benchmark’s normalization stage first when it is well-defined.
-- [ ] Ensure each response branch writes a clearly named artifact in the output dir (`sim_std_res.tsv` plus a JSON note of the response pipeline).
+- [ ] Keep `pmd_std_res` as the primary response construction (PMD runs on the count matrix; produces standardized residual-like z-scores).
+- [ ] Keep lightweight response baselines for sanity-checks (not “production normalization”):
+  - [ ] `log_counts` (no PMD; highlights depth confounding failure modes)
+  - [ ] `guide_zscore_log_counts` (fast PMD-like surrogate)
+- [ ] Ensure response-mode details are always recorded in `benchmark_report.json` and `sim_std_res.tsv` is written deterministically.
 
 #### P4.4 — Method Matrix (explicit; no conflation)
 Goal: evaluate methods × response constructions × depth handling without mixing outputs.
 
 - [ ] Expand benchmark `methods` to cover the historical p-combine explicitly:
-  - [ ] `stouffer_t` (current combined-t implementation; uses per-guide OLS t)
-  - [ ] `stouffer_z` (classic Stouffer: convert per-guide p→z with sign(beta), combine under Normal; optional weights)
+  - [ ] `stouffer` (combined-t implementation; uses per-guide OLS t)
 - [ ] Keep Plan A results explicitly separated:
   - [ ] LMM LRT metrics from `lrt_*` columns only
   - [ ] LMM Wald metrics from `wald_*` columns only
@@ -334,6 +322,9 @@ Goal: evaluate methods × response constructions × depth handling without mixin
 #### P4.5 — Performance Metrics (beyond calibration)
 Goal: quantify correctness along multiple axes, not just FDR.
 
+- [ ] Count realism / QC (pre-inference):
+  - [ ] mean–variance and mean–dispersion diagnostics (per-guide and per-gene; compare to NB truth when enabled)
+  - [ ] depth-proxy diagnostics: `log_libsize` distribution + correlation with treatment/batch
 - [ ] Calibration (null):
   - [ ] QQ + `lambda_gc` (already)
   - [ ] p-histograms and KS distance vs Uniform(0,1) (recorded numerically; plots optional)
