@@ -62,6 +62,12 @@ After completion, summarize agreement/disagreement across methods:
 python scripts/compare_gene_level_methods.py --out-dir .tmp/st941c/dose_rank
 ```
 
+For a significance-call and effect-size triage view (meta vs Plan A LMM):
+
+```bash
+python scripts/triage_gene_level_disagreements.py --out-dir .tmp/st941c/dose_rank --q 0.1 --top-n 50
+```
+
 ## One-hot run
 
 ```bash
@@ -71,9 +77,16 @@ guide-pmd-std-res \
   -model_matrix_file /home/ubuntu/bin/bfx-crispr-screen-de-paths/.assets/st941c/derived/guide_pmd_inputs/model_matrix_one_hot.tsv \
   -annotation_cols 2 \
   --std-res-file /home/ubuntu/bin/bfx-crispr-screen-de-paths/.assets/st941c/derived/guide_pmd_out/one_hot/PMD_std_res.tsv \
+  --focal-vars C1_low C1_high C2_low C2_high \
   --gene-progress \
   --gene-lmm-resume \
   --gene-lmm-checkpoint-every 200 \
   --gene-lmm-jobs 8
 ```
 
+After completion:
+
+```bash
+python scripts/compare_gene_level_methods.py --out-dir .tmp/st941c/one_hot
+python scripts/triage_gene_level_disagreements.py --out-dir .tmp/st941c/one_hot --q 0.1 --top-n 50
+```
