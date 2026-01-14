@@ -2,6 +2,7 @@ import hashlib
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import guide_pmd.pmd_std_res_guide_counts as mod
 
@@ -121,3 +122,99 @@ def test_gene_level_lmm_wiring_does_not_change_baseline_outputs(tmp_path, monkey
     assert not (gene_level_dir / "PMD_std_res_gene_meta.tsv").exists()
     assert (gene_level_dir / "PMD_std_res_gene_lmm.tsv").is_file()
     assert (gene_level_dir / "PMD_std_res_gene_lmm_full.tsv").is_file()
+
+
+def test_gene_level_lmm_resume_skips_checkpointed_tasks(tmp_path, monkeypatch):
+    import guide_pmd.gene_level_lmm as glmm
+
+    input_path = tmp_path / "counts.tsv"
+    model_matrix_path = tmp_path / "mm.tsv"
+    std_res_path = tmp_path / "PMD_std_res.tsv"
+
+    counts = pd.DataFrame(
+        {
+            "gene": ["A", "A", "B", "B"],
+            "s1": [10, 11, 12, 13],
+            "s2": [14, 15, 16, 17],
+            "s3": [18, 19, 20, 21],
+            "s4": [22, 23, 24, 25],
+        },
+        index=["g1", "g2", "g3", "g4"],
+    )
+    counts.to_csv(input_path, sep="\t")
+
+    mm = pd.DataFrame(
+        {"treatment": [0.0, 0.0, 1.0, 1.0]},
+        index=["s1", "s2", "s3", "s4"],
+    )
+    mm.to_csv(model_matrix_path, sep="\t")
+
+    std_res = pd.DataFrame(
+        np.arange(16, dtype=float).reshape(4, 4),
+        index=counts.index,
+        columns=mm.index,
+    )
+    std_res.to_csv(std_res_path, sep="\t")
+
+    out_dir = tmp_path / "out_resume"
+
+    first_key = ("A", "treatment")
+    second_key = ("B", "treatment")
+
+    def fake_iter_gene_lmm_rows(*_args, **_kwargs):
+        yield {"gene_id": first_key[0], "focal_var": first_key[1], "method": "lmm", "wald_p": 1.0, "lrt_p": 1.0}
+        raise RuntimeError("stop early (test)")
+
+    monkeypatch.setattr(glmm, "iter_gene_lmm_rows", fake_iter_gene_lmm_rows)
+
+    with pytest.raises(RuntimeError):
+        mod.pmd_std_res_and_stats(
+            str(input_path),
+            str(out_dir),
+            model_matrix_file=str(model_matrix_path),
+            p_combine_idx=None,
+            in_annotation_cols=2,
+            pre_regress_vars=None,
+            file_sep="tsv",
+            std_res_file=str(std_res_path),
+            gene_level=True,
+            gene_figures=False,
+            gene_methods=["lmm"],
+            focal_vars=["treatment"],
+            gene_id_col=1,
+            gene_lmm_scope="all",
+            gene_lmm_resume=True,
+            gene_lmm_checkpoint_every=1,
+        )
+
+    gene_level_dir = out_dir / "gene_level"
+    assert (gene_level_dir / "PMD_std_res_gene_lmm.partial.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm.partial.meta.json").is_file()
+
+    def fake_iter_gene_lmm_rows_resume(*_args, **kwargs):
+        assert kwargs.get("skip_keys") == {first_key}
+        yield {"gene_id": second_key[0], "focal_var": second_key[1], "method": "lmm", "wald_p": 1.0, "lrt_p": 1.0}
+
+    monkeypatch.setattr(glmm, "iter_gene_lmm_rows", fake_iter_gene_lmm_rows_resume)
+
+    mod.pmd_std_res_and_stats(
+        str(input_path),
+        str(out_dir),
+        model_matrix_file=str(model_matrix_path),
+        p_combine_idx=None,
+        in_annotation_cols=2,
+        pre_regress_vars=None,
+        file_sep="tsv",
+        std_res_file=str(std_res_path),
+        gene_level=True,
+        gene_figures=False,
+        gene_methods=["lmm"],
+        focal_vars=["treatment"],
+        gene_id_col=1,
+        gene_lmm_scope="all",
+        gene_lmm_resume=True,
+        gene_lmm_checkpoint_every=1,
+    )
+
+    gene_lmm = pd.read_csv(gene_level_dir / "PMD_std_res_gene_lmm.tsv", sep="\t")
+    assert set(zip(gene_lmm["gene_id"].tolist(), gene_lmm["focal_var"].tolist(), strict=True)) == {first_key, second_key}
