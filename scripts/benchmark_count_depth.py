@@ -296,6 +296,8 @@ def simulate_counts_and_std_res(
         batch_shift = rng.normal(loc=0.0, scale=float(cfg.batch_depth_log_sd), size=int(cfg.n_batches)).astype(float)
         depth_factor = depth_factor * np.exp(batch_shift[batch_id])
     depth_factor = depth_factor * np.where(treatment > 0, float(cfg.treatment_depth_multiplier), 1.0)
+    # "Observed" depth proxies derived from the simulated counts should be used for downstream adjustment.
+    # Keep the oracle depth_factor for truth/auditing only.
     log_depth = np.log(depth_factor)
 
     gene_ids = [f"gene_{i:05d}" for i in range(int(cfg.n_genes))]
@@ -363,6 +365,11 @@ def simulate_counts_and_std_res(
     counts_df = pd.DataFrame(counts_rows, index=guides, columns=sample_ids)
     annotation_df = pd.DataFrame({"gene_symbol": gene_for_guide}, index=guides)
 
+    libsize = counts_df.sum(axis=0).to_numpy(dtype=float)
+    libsize = np.clip(libsize, 1.0, None)
+    log_libsize = np.log(libsize)
+    log_libsize_centered = log_libsize - float(np.mean(log_libsize))
+
     if cfg.response_mode == "pmd_std_res":
         std_res_df = _compute_pmd_std_res(counts_df, n_boot=int(cfg.pmd_n_boot), seed=int(cfg.pmd_seed))
     else:
@@ -379,7 +386,7 @@ def simulate_counts_and_std_res(
 
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
     if bool(cfg.include_depth_covariate):
-        model_matrix["log_depth"] = log_depth
+        model_matrix["log_libsize_centered"] = log_libsize_centered
     if bool(cfg.include_batch_covariate) and int(cfg.n_batches) > 1:
         for b in range(1, int(cfg.n_batches)):
             model_matrix[f"batch_{b}"] = (batch_id == b).astype(float)
@@ -391,6 +398,9 @@ def simulate_counts_and_std_res(
             "batch_id": batch_id.astype(int),
             "depth_factor": depth_factor.astype(float),
             "log_depth": log_depth.astype(float),
+            "libsize": libsize.astype(float),
+            "log_libsize": log_libsize.astype(float),
+            "log_libsize_centered": log_libsize_centered.astype(float),
         }
     )
 
@@ -828,7 +838,11 @@ def main() -> None:
         default=None,
         help="PMD RNG seed (only used for response-mode=pmd_std_res); defaults to --seed.",
     )
-    parser.add_argument("--include-depth-covariate", action="store_true", help="Include log_depth in model matrix as a nuisance covariate.")
+    parser.add_argument(
+        "--include-depth-covariate",
+        action="store_true",
+        help="Include an observed depth proxy (log_libsize_centered = log(colsum(counts)) centered) in the model matrix as a nuisance covariate.",
+    )
     parser.add_argument(
         "--include-batch-covariate",
         action=argparse.BooleanOptionalAction,

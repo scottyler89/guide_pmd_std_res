@@ -287,16 +287,15 @@ Phase C — Performance benchmark grid + reporting
 Phase D — Tie benchmark back to selection policy
 - [x] Evaluate Plan A selection policy tradeoffs (power vs runtime) on the benchmark grid (explicitly record selection settings).
 
-#### P4.2 — Depth Covariate Realism (oracle vs observed)
-Goal: ensure the benchmark reflects what we can do in real data, where true depth factors are unknown.
+#### P4.2 — Depth Covariate Realism (observed-only; no oracle adjustment)
+Goal: ensure the benchmark reflects what we can do in real data, where we only have measured library sizes (count depth).
 
 - [ ] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
   - [ ] `none` (no depth adjustment)
-  - [ ] `oracle_log_depth` (current behavior; uses simulated `log_depth`)
   - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible)
   - [ ] `log_libsize_centered` (same but centered to mean 0 to reduce collinearity with intercept)
 - [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
-- [ ] Add a small check/plot in the benchmark report: correlation between `oracle_log_depth` and `log_libsize` (helps interpret realism gap).
+- [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
 #### P4.3 — Normalization + Response Construction (common-sense baselines)
 Goal: benchmark “common sense” depth-handling strategies end-to-end, not just the model-matrix covariate.
