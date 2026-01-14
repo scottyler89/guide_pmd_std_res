@@ -38,19 +38,29 @@ This script can be easily installed with pip:
 | `--gene-level` / `--no-gene-level` | flag | Enable/disable **gene-level aggregation outputs** (baseline outputs remain unchanged).                                                     | `True`       |
 | `--focal-vars`           | `list`  | Model-matrix column name(s) to compute gene-level effects for (default: all non-Intercept columns).                                              | `None`       |
 | `--gene-id-col`          | `int`   | 0-based column index in the original input file for the gene id (0 is the guide id/index).                                                          | `1`          |
-| `--gene-methods`         | `list`  | Gene-level methods to run (currently supports: `meta`, `lmm`, `qc`).                                                                                | `["meta","lmm","qc"]` |
+| `--gene-methods`         | `list`  | Gene-level methods to run (supports: `meta`, `lmm`, `qc`, `flagged`, `mixture`, `tmeta`).                                                           | `["meta","lmm","qc","flagged","mixture","tmeta"]` |
 | `--gene-out-dir`         | `str`   | Optional output directory for gene-level tables (default: `<out_dir>/gene_level`).                                                                  | `None`       |
 | `--gene-figures` / `--no-gene-figures` | flag | Enable/disable gene-level figures (requires `matplotlib`).                                                                 | `True`       |
 | `--gene-figures-dir`     | `str`   | Optional output directory for gene-level figures (default: `<out_dir>/figures/gene_level`).                                                         | `None`       |
 | `--gene-forest-genes`    | `list`  | Optional gene id(s) to generate per-guide forest plots for (requires `--gene-figures`).                                                             | `None`       |
 | `--gene-progress`        | flag    | Print a short summary of gene-level execution (counts + fallbacks).                                                                                 | `False`      |
+| `--gene-lmm-scope`       | `str`   | Plan A (LMM) scope selection policy (`all`, `meta_fdr`, `meta_or_het_fdr`, `explicit`, `none`).                                                     | `meta_or_het_fdr` |
+| `--gene-lmm-q-meta`      | `float` | Plan A selection: meta FDR threshold `q_meta`.                                                                                                       | `0.1`        |
+| `--gene-lmm-q-het`       | `float` | Plan A selection: heterogeneity FDR threshold `q_het` (Cochran's Q test).                                                                           | `0.1`        |
+| `--gene-lmm-audit-n`     | `int`   | Plan A selection: deterministic audit sample size per focal var.                                                                                    | `50`         |
+| `--gene-lmm-audit-seed`  | `int`   | Plan A selection: audit RNG seed.                                                                                                                   | `123456`     |
+| `--gene-lmm-max-genes-per-focal-var` | `int` | Optional cap on selected genes per focal var (explicit compute budget).                                                                       | `None`       |
+| `--gene-lmm-explicit-genes` | `list` | Gene id(s) to fit with Plan A when `--gene-lmm-scope=explicit`.                                                                                 | `None`       |
+| `--gene-lmm-jobs`        | `int`   | Parallel worker threads for Plan A LMM.                                                                                                              | `1`          |
+| `--gene-lmm-resume`      | flag    | Enable Plan A LMM checkpoint/resume (writes `PMD_std_res_gene_lmm.partial.*` under `gene_level/`).                                                  | `False`      |
+| `--gene-lmm-checkpoint-every` | `int` | When `--gene-lmm-resume` is set, append checkpoint rows every N tasks.                                                                         | `200`        |
 
 ---
 
 ### Example Usage
 
 ```bash
-python -m guide_pmd.pmd_std_res_guide_counts \
+guide-pmd-std-res \
     -in_file data/input_data.tsv \
     -out_dir results/ \
     -model_matrix_file data/model_matrix.tsv \

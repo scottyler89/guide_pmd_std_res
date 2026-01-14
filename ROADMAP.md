@@ -166,7 +166,7 @@ Phase F — Tests + real-data regression
 - [x] Unit tests for `Q_p` / `Q_p_adj` (edge cases: `m=0/1/2`, zero variance).
 - [x] Unit tests for selection determinism + reason labeling.
 - [x] Integration test: default selection produces `PMD_std_res_gene_lmm_selection.tsv` and does not change baseline TSV bytes.
-- [ ] Add a local, non-committed st941c prototype runner doc/snippet that uses `--std-res-file` to validate behavior quickly.
+- [x] Add a local st941c prototype runner doc/snippet that uses `--std-res-file` to validate behavior quickly (`docs/plans/st941c_prototype_run.md`).
 
 #### P3.5 — Robustness / Contamination Handling (Plan C)
 Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (Decision D).

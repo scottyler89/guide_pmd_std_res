@@ -131,11 +131,27 @@ Example (meta + mixed model + QC + figures):
 .. code-block:: bash
 
    guide-pmd-std-res \
-     -i counts.tsv \
-     -o out/ \
-     -mm model_matrix.tsv \
+     -in_file counts.tsv \
+     -out_dir out/ \
+     -model_matrix_file model_matrix.tsv \
+     -annotation_cols 2 \
      --focal-vars treatment \
      --gene-forest-genes A \
+     --gene-progress
+
+Plan A checkpoint/resume (recommended for large runs):
+
+.. code-block:: bash
+
+   guide-pmd-std-res \
+     -in_file counts.tsv \
+     -out_dir out/ \
+     -model_matrix_file model_matrix.tsv \
+     -annotation_cols 2 \
+     --std-res-file PMD_std_res.tsv \
+     --gene-lmm-resume \
+     --gene-lmm-checkpoint-every 200 \
+     --gene-lmm-jobs 8 \
      --gene-progress
 
 Notes
