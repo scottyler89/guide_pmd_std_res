@@ -201,6 +201,7 @@ def write_gene_level_figures(
     *,
     prefix: str,
     gene_meta: pd.DataFrame | None = None,
+    gene_stouffer: pd.DataFrame | None = None,
     gene_lmm: pd.DataFrame | None = None,
     gene_qc: pd.DataFrame | None = None,
     agreement_q: float = 0.1,
@@ -255,6 +256,18 @@ def write_gene_level_figures(
             )
             written.append(out_path)
 
+    if gene_stouffer is not None and (not gene_stouffer.empty):
+        for focal_var, sub in _for_each_focal_var(gene_stouffer):
+            out_path = os.path.join(output_dir, f"{prefix}_gene_stouffer_volcano__{focal_var}.png")
+            _write_volcano(
+                sub,
+                effect_col="stouffer_t",
+                p_col="p",
+                title=f"Gene-level Stouffer volcano ({focal_var})",
+                out_path=out_path,
+            )
+            written.append(out_path)
+
     if gene_lmm is not None and (not gene_lmm.empty):
         for focal_var, sub in _for_each_focal_var(gene_lmm):
             if "lrt_p" in sub.columns:
@@ -292,24 +305,22 @@ def write_gene_level_figures(
                 )
                 written.append(out_path)
 
-    if (
-        (gene_meta is not None)
-        and (gene_lmm is not None)
-        and (not gene_meta.empty)
-        and (not gene_lmm.empty)
-    ):
+    if (gene_meta is not None) and (gene_lmm is not None) and (not gene_meta.empty) and (not gene_lmm.empty):
         meta_cols = ["gene_id", "focal_var", "theta", "p", "p_adj"]
         lmm_cols = ["gene_id", "focal_var", "theta", "lrt_p", "wald_p", "lrt_p_adj", "wald_p_adj", "method"]
         meta_sub = gene_meta[meta_cols].rename(columns={"theta": "theta_meta", "p": "p_meta"})
         lmm_sub = gene_lmm[lmm_cols].rename(columns={"theta": "theta_lmm"})
+
         joined = meta_sub.merge(lmm_sub, on=["gene_id", "focal_var"], how="inner")
         if not joined.empty:
             q = float(agreement_q)
             q_safe = _sanitize_filename_component(f"q{q:g}")
             for focal_var, sub in _for_each_focal_var(joined):
-                sub = sub.loc[sub["method"].astype(str) == "lmm"].copy()
-                if sub.empty:
-                    continue
+                if "method" in sub.columns:
+                    sub = sub.loc[sub["method"].astype(str) == "lmm"].copy()
+                    if sub.empty:
+                        continue
+
                 out_path = os.path.join(output_dir, f"{prefix}_gene_compare_theta__{focal_var}.png")
                 _write_scatter(
                     sub,
@@ -479,6 +490,58 @@ def write_gene_level_figures(
                 )
                 written.append(out_path)
 
+    if (gene_meta is not None) and (gene_stouffer is not None) and (not gene_meta.empty) and (not gene_stouffer.empty):
+        meta_cols = ["gene_id", "focal_var", "theta", "p", "p_adj"]
+        st_cols = ["gene_id", "focal_var", "stouffer_t", "p", "p_adj"]
+        meta_sub = gene_meta[meta_cols].rename(columns={"theta": "theta_meta", "p": "p_meta"})
+        st_sub = gene_stouffer[st_cols].rename(columns={"p": "p_stouffer", "p_adj": "p_adj_stouffer"})
+
+        joined = meta_sub.merge(st_sub, on=["gene_id", "focal_var"], how="inner")
+        if not joined.empty:
+            q = float(agreement_q)
+            q_safe = _sanitize_filename_component(f"q{q:g}")
+            for focal_var, sub in _for_each_focal_var(joined):
+                tmp = sub.assign(
+                    neglog10_p_meta=_safe_neg_log10_p(sub["p_meta"]),
+                    neglog10_p_stouffer=_safe_neg_log10_p(sub["p_stouffer"]),
+                )
+                out_path = os.path.join(output_dir, f"{prefix}_gene_compare_p_meta_vs_stouffer__{focal_var}.png")
+                _write_scatter(
+                    tmp,
+                    x_col="neglog10_p_meta",
+                    y_col="neglog10_p_stouffer",
+                    title=f"-log10(p) comparison: meta vs Stouffer ({focal_var})",
+                    x_label="-log10(p) meta",
+                    y_label="-log10(p) stouffer",
+                    out_path=out_path,
+                )
+                written.append(out_path)
+
+                if "p_adj" in sub.columns and "p_adj_stouffer" in sub.columns:
+                    meta_sig = sub["p_adj"].astype(float) <= q
+                    st_sig = sub["p_adj_stouffer"].astype(float) <= q
+                    counts = np.array(
+                        [
+                            [int((~meta_sig & ~st_sig).sum()), int((~meta_sig & st_sig).sum())],
+                            [int((meta_sig & ~st_sig).sum()), int((meta_sig & st_sig).sum())],
+                        ],
+                        dtype=float,
+                    )
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_confusion_meta_vs_stouffer__{focal_var}__{q_safe}.png",
+                    )
+                    _write_confusion_matrix(
+                        counts,
+                        title=f"FDR agreement: meta vs Stouffer ({focal_var}; q={q:g})",
+                        x_label="Stouffer significant",
+                        y_label="Meta significant",
+                        out_path=out_path,
+                        x_ticklabels=("no", "yes"),
+                        y_ticklabels=("no", "yes"),
+                    )
+                    written.append(out_path)
+
     if gene_qc is not None and (not gene_qc.empty):
         for focal_var, sub in _for_each_focal_var(gene_qc):
             out_path = os.path.join(output_dir, f"{prefix}_gene_qc_sign_agreement__{focal_var}.png")
@@ -494,8 +557,6 @@ def write_gene_level_figures(
             written.append(out_path)
 
     return written
-
-
 def write_gene_forest_plots(
     per_guide_ols: pd.DataFrame,
     output_dir: str,

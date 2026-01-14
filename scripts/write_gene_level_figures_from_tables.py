@@ -60,10 +60,12 @@ def main() -> None:
     figures_dir = str(args.figures_dir or os.path.join(out_dir, "figures", "gene_level"))
 
     meta_path = os.path.join(gene_level_dir, "PMD_std_res_gene_meta.tsv")
+    stouffer_path = os.path.join(gene_level_dir, "PMD_std_res_gene_stouffer.tsv")
     lmm_path = os.path.join(gene_level_dir, "PMD_std_res_gene_lmm.tsv")
     qc_path = os.path.join(gene_level_dir, "PMD_std_res_gene_qc.tsv")
 
     gene_meta = _maybe_read_tsv(meta_path)
+    gene_stouffer = _maybe_read_tsv(stouffer_path)
     gene_lmm = _maybe_read_tsv(lmm_path)
     gene_qc = _maybe_read_tsv(qc_path)
 
@@ -73,6 +75,7 @@ def main() -> None:
         figures_dir,
         prefix=str(args.prefix),
         gene_meta=gene_meta,
+        gene_stouffer=gene_stouffer,
         gene_lmm=gene_lmm,
         gene_qc=gene_qc,
         agreement_q=float(args.agreement_q),

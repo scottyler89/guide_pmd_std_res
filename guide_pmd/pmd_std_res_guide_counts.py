@@ -414,7 +414,7 @@ def pmd_std_res_and_stats(input_file,
 
         if gene_level:
             if gene_methods is None:
-                gene_methods = ["meta", "lmm", "qc", "flagged", "mixture", "tmeta"]
+                gene_methods = ["meta", "stouffer", "lmm", "qc", "flagged", "mixture", "tmeta"]
             if gene_out_dir is None:
                 gene_out_dir = os.path.join(output_dir, "gene_level")
             from . import gene_level as gene_level_mod
@@ -437,9 +437,12 @@ def pmd_std_res_and_stats(input_file,
             gene_mixture_guides = None
             gene_tmeta = None
             gene_tmeta_guides = None
+            gene_stouffer = None
             per_guide_ols = None
 
-            needs_per_guide_ols = any(m in gene_methods for m in ["meta", "lmm", "qc", "flagged", "mixture", "tmeta"]) or (
+            needs_per_guide_ols = any(
+                m in gene_methods for m in ["meta", "stouffer", "lmm", "qc", "flagged", "mixture", "tmeta"]
+            ) or (
                 gene_figures and (gene_forest_genes is not None and len(gene_forest_genes) > 0)
             )
             if needs_per_guide_ols:
@@ -466,6 +469,22 @@ def pmd_std_res_and_stats(input_file,
                     os.makedirs(gene_out_dir, exist_ok=True)
                     gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta.tsv")
                     gene_meta.to_csv(gene_out_path, sep="\t", index=False)
+
+            if "stouffer" in gene_methods:
+                from . import gene_level_stouffer as gene_level_stouffer_mod
+
+                gene_stouffer = gene_level_stouffer_mod.compute_gene_stouffer(
+                    gene_response,
+                    annotation_table,
+                    gene_mm,
+                    focal_vars=focal_vars,
+                    gene_id_col=gene_id_col,
+                    add_intercept=gene_add_intercept,
+                    per_guide_ols=per_guide_ols,
+                )
+                os.makedirs(gene_out_dir, exist_ok=True)
+                gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_stouffer.tsv")
+                gene_stouffer.to_csv(gene_out_path, sep="\t", index=False)
             if "lmm" in gene_methods:
                 from . import gene_level_selection as gene_level_selection_mod
                 from . import gene_level_lmm as gene_level_lmm_mod
@@ -789,6 +808,7 @@ def pmd_std_res_and_stats(input_file,
                         gene_figures_dir,
                         prefix="PMD_std_res",
                         gene_meta=gene_meta,
+                        gene_stouffer=gene_stouffer,
                         gene_lmm=gene_lmm,
                         gene_qc=gene_qc,
                     )
@@ -819,6 +839,8 @@ def pmd_std_res_and_stats(input_file,
                     msg_parts.append(f"lmm_selection={gene_lmm_selection.shape[0]}")
                 if gene_lmm is not None:
                     msg_parts.append(f"lmm={gene_lmm.shape[0]}")
+                if gene_stouffer is not None:
+                    msg_parts.append(f"stouffer={gene_stouffer.shape[0]}")
                 if gene_qc is not None:
                     msg_parts.append(f"qc={gene_qc.shape[0]}")
                 if gene_flagged is not None:
@@ -914,8 +936,8 @@ def main():
         dest="gene_methods",
         type=str,
         nargs="+",
-        default=["meta", "lmm", "qc", "flagged", "mixture", "tmeta"],
-        help="Gene-level methods to run (default: meta lmm qc flagged mixture tmeta).",
+        default=["meta", "stouffer", "lmm", "qc", "flagged", "mixture", "tmeta"],
+        help="Gene-level methods to run (default: meta stouffer lmm qc flagged mixture tmeta).",
     )
     parser.add_argument(
         "--gene-out-dir",
