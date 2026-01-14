@@ -286,3 +286,84 @@ Phase C — Performance benchmark grid + reporting
 
 Phase D — Tie benchmark back to selection policy
 - [x] Evaluate Plan A selection policy tradeoffs (power vs runtime) on the benchmark grid (explicitly record selection settings).
+
+#### P4.2 — Depth Covariate Realism (oracle vs observed)
+Goal: ensure the benchmark reflects what we can do in real data, where true depth factors are unknown.
+
+- [ ] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
+  - [ ] `none` (no depth adjustment)
+  - [ ] `oracle_log_depth` (current behavior; uses simulated `log_depth`)
+  - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible)
+  - [ ] `log_libsize_centered` (same but centered to mean 0 to reduce collinearity with intercept)
+- [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
+- [ ] Add a small check/plot in the benchmark report: correlation between `oracle_log_depth` and `log_libsize` (helps interpret realism gap).
+
+#### P4.3 — Normalization + Response Construction (common-sense baselines)
+Goal: benchmark “common sense” depth-handling strategies end-to-end, not just the model-matrix covariate.
+
+- [ ] Refactor response construction into explicit stages (recorded in JSON):
+  - [ ] `normalization_mode` (acts on counts before log/standardization)
+  - [ ] `transform_mode` (e.g., log)
+  - [ ] `standardize_mode` (e.g., per-guide z-score)
+- [ ] Implement `normalization_mode` options (deterministic; no extra deps):
+  - [ ] `none` (raw counts)
+  - [ ] `cpm` (counts per million by sample libsize)
+  - [ ] `median_ratio` (DESeq-style size factors; robust to composition shifts; document assumptions)
+- [ ] Implement `transform_mode` options:
+  - [ ] `log(count + pseudocount)` (current)
+  - [ ] `log(norm_count + pseudocount)` (applies after normalization)
+- [ ] Implement `standardize_mode` options:
+  - [ ] `none`
+  - [ ] `per_guide_zscore` (current “fast PMD-like surrogate”)
+- [ ] Keep `pmd_std_res` as a separate response branch (PMD runs on the count matrix), but allow applying the benchmark’s normalization stage first when it is well-defined.
+- [ ] Ensure each response branch writes a clearly named artifact in the output dir (`sim_std_res.tsv` plus a JSON note of the response pipeline).
+
+#### P4.4 — Method Matrix (explicit; no conflation)
+Goal: evaluate methods × response constructions × depth handling without mixing outputs.
+
+- [ ] Expand benchmark `methods` to cover the historical p-combine explicitly:
+  - [ ] `stouffer_t` (current combined-t implementation; uses per-guide OLS t)
+  - [ ] `stouffer_z` (classic Stouffer: convert per-guide p→z with sign(beta), combine under Normal; optional weights)
+- [ ] Keep Plan A results explicitly separated:
+  - [ ] LMM LRT metrics from `lrt_*` columns only
+  - [ ] LMM Wald metrics from `wald_*` columns only
+- [ ] Add a benchmark-side “design matrix sanity” section in the JSON:
+  - [ ] rank / condition number checks per run
+  - [ ] correlations among covariates (esp. treatment vs depth proxies vs batch)
+
+#### P4.5 — Performance Metrics (beyond calibration)
+Goal: quantify correctness along multiple axes, not just FDR.
+
+- [ ] Calibration (null):
+  - [ ] QQ + `lambda_gc` (already)
+  - [ ] p-histograms and KS distance vs Uniform(0,1) (recorded numerically; plots optional)
+- [ ] Detection (signal):
+  - [ ] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
+  - [ ] power curves vs effect size (`effect_sd`) at fixed FDR q
+- [ ] Estimation quality:
+  - [ ] correlation and RMSE of `theta_hat` vs `theta_true` (per method; effect columns differ by method)
+  - [ ] sign accuracy vs `theta_true`
+- [ ] Robustness/heterogeneity diagnostics:
+  - [ ] relationship between estimated `tau` (meta/LMM) and simulated guide heterogeneity (`guide_slope_sd`, `offtarget_*`)
+- [ ] Runtime scaling:
+  - [ ] runtime vs `n_genes` × `guides_per_gene` × sample size; plus “success/failure fractions” for Plan A.
+
+#### P4.6 — Visualization Suite (for the full grid)
+Goal: a small set of figures that makes tradeoffs obvious to a reader.
+
+- [ ] Grid heatmaps (faceted by method/response):
+  - [ ] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier`
+  - [ ] FDR at q vs same axes
+- [ ] Power vs realism knobs:
+  - [ ] TPR at q vs `effect_sd` (one curve per method/response/depth-handling)
+- [ ] Pareto front plots:
+  - [ ] runtime vs TPR at q (color by achieved FDR; flag invalid/failed fits)
+- [ ] Agreement/disagreement plots on the *same simulated truth*:
+  - [ ] method-vs-method scatter of `-log10(p)` (never mixing LRT/Wald)
+  - [ ] confusion matrices at q for method pairs
+- [ ] “Depth confounding” diagnostics:
+  - [ ] estimated treatment effect vs simulated depth proxy correlation (shows residual confounding patterns)
+
+#### P4.7 — Reporting + Reproducibility
+- [ ] Standardize output directory naming to encode the benchmark pipeline (response + normalization + depth mode) without ambiguity.
+- [ ] Ensure every figure can be regenerated from the written TSV/JSON artifacts (scripts remain consumer-only; no hidden recomputation).
