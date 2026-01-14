@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from collections.abc import Sequence
+from concurrent.futures import FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait
 import time
 import warnings
 
@@ -15,6 +18,36 @@ from statsmodels.tools.sm_exceptions import ConvergenceWarning
 from .gene_level import _align_model_matrix
 from .gene_level import _get_gene_ids
 from .gene_level import _nan_fdr
+
+GENE_LMM_COLUMNS = [
+    "gene_id",
+    "focal_var",
+    "method",
+    "model",
+    "optimizer_full",
+    "optimizer_null",
+    "theta",
+    "se_theta",
+    "wald_z",
+    "wald_p",
+    "wald_ok",
+    "wald_p_adj",
+    "lrt_stat",
+    "lrt_stat_raw",
+    "lrt_p",
+    "lrt_ok",
+    "lrt_p_adj",
+    "lrt_clipped",
+    "sigma_alpha",
+    "tau",
+    "converged_full",
+    "converged_null",
+    "m_guides_total",
+    "m_guides_used",
+    "n_samples",
+    "n_obs",
+    "fit_error",
+]
 
 
 def _prepare_model_matrix(model_matrix: pd.DataFrame, *, add_intercept: bool) -> pd.DataFrame:
@@ -388,30 +421,22 @@ def _fit_gene_lmm_task(
     }
 
 
-def compute_gene_lmm(
+def _prepare_gene_lmm_context(
     response_matrix: pd.DataFrame,
     annotation_table: pd.DataFrame,
     model_matrix: pd.DataFrame,
     *,
     focal_vars: Sequence[str],
-    gene_id_col: int = 1,
-    add_intercept: bool = True,
-    allow_random_slope: bool = True,
-    min_guides_random_slope: int = 3,
-    max_iter: int = 200,
-    fallback_to_meta: bool = True,
-    meta_results: pd.DataFrame | None = None,
-    selection_table: pd.DataFrame | None = None,
-    n_jobs: int = 1,
-    progress: bool = False,
-    progress_every: int = 500,
-    progress_min_seconds: float = 10.0,
-) -> pd.DataFrame:
-    """
-    Compute gene-level mixed model results (Plan A) with explicit, recorded fallbacks.
-
-    This function never mutates/writes baseline outputs; it returns a table only.
-    """
+    gene_id_col: int,
+    add_intercept: bool,
+    fallback_to_meta: bool,
+    meta_results: pd.DataFrame | None,
+    selection_table: pd.DataFrame | None,
+    skip_keys: set[tuple[str, str]] | None,
+    n_jobs: int,
+    progress_every: int,
+    progress_min_seconds: float,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, list[str]], list[tuple[str, str]], dict[tuple[str, str], dict[str, float]] | None, int, int, float]:
     from . import gene_level as gene_level_mod
 
     focal_vars = list(focal_vars)
@@ -488,13 +513,60 @@ def compute_gene_lmm(
 
     tasks: list[tuple[str, str]] = []
     all_gene_ids = sorted(gene_ids.unique().astype(str).tolist())
+    skip = set(skip_keys or [])
     for focal_var in sorted(focal_vars):
         genes_to_fit = genes_by_focal.get(str(focal_var), []) if genes_by_focal is not None else None
         gene_iter = genes_to_fit if genes_to_fit is not None else all_gene_ids
         for gene_id in gene_iter:
+            if skip and (str(gene_id), str(focal_var)) in skip:
+                continue
             tasks.append((str(focal_var), str(gene_id)))
 
-    out_rows: list[dict[str, object]] = []
+    return mm, mm_reset, gene_to_guides, tasks, meta_lookup, n_jobs, progress_every, progress_min_seconds
+
+
+def iter_gene_lmm_rows(
+    response_matrix: pd.DataFrame,
+    annotation_table: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    focal_vars: Sequence[str],
+    gene_id_col: int = 1,
+    add_intercept: bool = True,
+    allow_random_slope: bool = True,
+    min_guides_random_slope: int = 3,
+    max_iter: int = 200,
+    fallback_to_meta: bool = True,
+    meta_results: pd.DataFrame | None = None,
+    selection_table: pd.DataFrame | None = None,
+    skip_keys: set[tuple[str, str]] | None = None,
+    n_jobs: int = 1,
+    progress: bool = False,
+    progress_every: int = 500,
+    progress_min_seconds: float = 10.0,
+) -> Iterable[dict[str, object]]:
+    """
+    Iterate Plan A gene-level LMM results as row dicts.
+
+    This enables checkpoint/resume logic in orchestration layers without embedding IO
+    in core analysis functions.
+    """
+    mm, mm_reset, gene_to_guides, tasks, meta_lookup, n_jobs, progress_every, progress_min_seconds = _prepare_gene_lmm_context(
+        response_matrix,
+        annotation_table,
+        model_matrix,
+        focal_vars=focal_vars,
+        gene_id_col=gene_id_col,
+        add_intercept=add_intercept,
+        fallback_to_meta=fallback_to_meta,
+        meta_results=meta_results,
+        selection_table=selection_table,
+        skip_keys=skip_keys,
+        n_jobs=n_jobs,
+        progress_every=progress_every,
+        progress_min_seconds=progress_min_seconds,
+    )
+
     n_total = int(len(tasks))
     t0 = time.monotonic()
     last_print = t0
@@ -506,9 +578,9 @@ def compute_gene_lmm(
             flush=True,
         )
 
-    if n_jobs == 1 or n_total == 0:
-        for idx, (focal_var, gene_id) in enumerate(tasks, start=1):
-            row = _fit_gene_lmm_task(
+    def _safe_fit_one(focal_var: str, gene_id: str) -> dict[str, object]:
+        try:
+            return _fit_gene_lmm_task(
                 response_matrix=response_matrix,
                 gene_to_guides=gene_to_guides,
                 mm=mm,
@@ -521,8 +593,40 @@ def compute_gene_lmm(
                 fallback_to_meta=bool(fallback_to_meta),
                 meta_lookup=meta_lookup,
             )
-            out_rows.append(row)
+        except Exception as exc:
+            return {
+                "gene_id": str(gene_id),
+                "focal_var": str(focal_var),
+                "method": "failed",
+                "model": "",
+                "optimizer_full": "",
+                "optimizer_null": "",
+                "theta": np.nan,
+                "se_theta": np.nan,
+                "wald_z": np.nan,
+                "wald_p": np.nan,
+                "wald_ok": False,
+                "wald_p_adj": np.nan,
+                "lrt_stat": np.nan,
+                "lrt_stat_raw": np.nan,
+                "lrt_p": np.nan,
+                "lrt_ok": False,
+                "lrt_p_adj": np.nan,
+                "lrt_clipped": False,
+                "sigma_alpha": np.nan,
+                "tau": np.nan,
+                "converged_full": False,
+                "converged_null": False,
+                "m_guides_total": np.nan,
+                "m_guides_used": np.nan,
+                "n_samples": np.nan,
+                "n_obs": np.nan,
+                "fit_error": f"exception: {type(exc).__name__}: {exc}",
+            }
 
+    if n_jobs == 1 or n_total == 0:
+        for idx, (focal_var, gene_id) in enumerate(tasks, start=1):
+            yield _safe_fit_one(focal_var, gene_id)
             if progress and (idx % progress_every == 0 or idx == n_total):
                 now = time.monotonic()
                 if (now - last_print) >= progress_min_seconds or idx == n_total:
@@ -533,100 +637,91 @@ def compute_gene_lmm(
                         f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
                         flush=True,
                     )
-    else:
-        def _fit_one(task: tuple[str, str]) -> dict[str, object]:
-            focal_var, gene_id = task
-            try:
-                return _fit_gene_lmm_task(
-                    response_matrix=response_matrix,
-                    gene_to_guides=gene_to_guides,
-                    mm=mm,
-                    mm_reset=mm_reset,
-                    gene_id=gene_id,
-                    focal_var=focal_var,
-                    allow_random_slope=bool(allow_random_slope),
-                    min_guides_random_slope=int(min_guides_random_slope),
-                    max_iter=int(max_iter),
-                    fallback_to_meta=bool(fallback_to_meta),
-                    meta_lookup=meta_lookup,
-                )
-            except Exception as exc:
-                return {
-                    "gene_id": str(gene_id),
-                    "focal_var": str(focal_var),
-                    "method": "failed",
-                    "model": "",
-                    "optimizer_full": "",
-                    "optimizer_null": "",
-                    "theta": np.nan,
-                    "se_theta": np.nan,
-                    "wald_z": np.nan,
-                    "wald_p": np.nan,
-                    "wald_ok": False,
-                    "wald_p_adj": np.nan,
-                    "lrt_stat": np.nan,
-                    "lrt_stat_raw": np.nan,
-                    "lrt_p": np.nan,
-                    "lrt_ok": False,
-                    "lrt_p_adj": np.nan,
-                    "lrt_clipped": False,
-                    "sigma_alpha": np.nan,
-                    "tau": np.nan,
-                    "converged_full": False,
-                    "converged_null": False,
-                    "m_guides_total": np.nan,
-                    "m_guides_used": np.nan,
-                    "n_samples": np.nan,
-                    "n_obs": np.nan,
-                    "fit_error": f"exception: {type(exc).__name__}: {exc}",
-                }
+        return
 
-        with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-            for idx, row in enumerate(executor.map(_fit_one, tasks), start=1):
-                out_rows.append(row)
-                if progress and (idx % progress_every == 0 or idx == n_total):
+    max_inflight = max(4 * int(n_jobs), 256)
+    inflight = min(max_inflight, n_total)
+    task_iter = iter(tasks)
+
+    with ThreadPoolExecutor(max_workers=int(n_jobs)) as executor:
+        futures = set()
+        for _ in range(inflight):
+            focal_var, gene_id = next(task_iter)
+            futures.add(executor.submit(_safe_fit_one, focal_var, gene_id))
+
+        completed = 0
+        while futures:
+            done, futures = wait(futures, return_when=FIRST_COMPLETED)
+            for fut in done:
+                completed += 1
+                yield fut.result()
+                try:
+                    focal_var, gene_id = next(task_iter)
+                except StopIteration:
+                    pass
+                else:
+                    futures.add(executor.submit(_safe_fit_one, focal_var, gene_id))
+
+                if progress and (completed % progress_every == 0 or completed == n_total):
                     now = time.monotonic()
-                    if (now - last_print) >= progress_min_seconds or idx == n_total:
+                    if (now - last_print) >= progress_min_seconds or completed == n_total:
                         last_print = now
-                        rate = idx / max(1e-9, (now - t0))
-                        eta_s = (n_total - idx) / max(1e-9, rate)
+                        rate = completed / max(1e-9, (now - t0))
+                        eta_s = (n_total - completed) / max(1e-9, rate)
                         print(
-                            f"gene-level lmm: {idx}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
+                            f"gene-level lmm: {completed}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
                             flush=True,
                         )
 
-    columns = [
-        "gene_id",
-        "focal_var",
-        "method",
-        "model",
-        "optimizer_full",
-        "optimizer_null",
-        "theta",
-        "se_theta",
-        "wald_z",
-        "wald_p",
-        "wald_ok",
-        "wald_p_adj",
-        "lrt_stat",
-        "lrt_stat_raw",
-        "lrt_p",
-        "lrt_ok",
-        "lrt_p_adj",
-        "lrt_clipped",
-        "sigma_alpha",
-        "tau",
-        "converged_full",
-        "converged_null",
-        "m_guides_total",
-        "m_guides_used",
-        "n_samples",
-        "n_obs",
-        "fit_error",
-    ]
-    out = pd.DataFrame(out_rows, columns=columns).sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(
-        drop=True
+
+def compute_gene_lmm(
+    response_matrix: pd.DataFrame,
+    annotation_table: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    focal_vars: Sequence[str],
+    gene_id_col: int = 1,
+    add_intercept: bool = True,
+    allow_random_slope: bool = True,
+    min_guides_random_slope: int = 3,
+    max_iter: int = 200,
+    fallback_to_meta: bool = True,
+    meta_results: pd.DataFrame | None = None,
+    selection_table: pd.DataFrame | None = None,
+    n_jobs: int = 1,
+    progress: bool = False,
+    progress_every: int = 500,
+    progress_min_seconds: float = 10.0,
+) -> pd.DataFrame:
+    """
+    Compute gene-level mixed model results (Plan A) with explicit, recorded fallbacks.
+
+    This function never mutates/writes baseline outputs; it returns a table only.
+    """
+    out_rows = list(
+        iter_gene_lmm_rows(
+            response_matrix,
+            annotation_table,
+            model_matrix,
+            focal_vars=focal_vars,
+            gene_id_col=gene_id_col,
+            add_intercept=add_intercept,
+            allow_random_slope=allow_random_slope,
+            min_guides_random_slope=min_guides_random_slope,
+            max_iter=max_iter,
+            fallback_to_meta=fallback_to_meta,
+            meta_results=meta_results,
+            selection_table=selection_table,
+            skip_keys=None,
+            n_jobs=n_jobs,
+            progress=progress,
+            progress_every=progress_every,
+            progress_min_seconds=progress_min_seconds,
+        )
     )
+    out = pd.DataFrame(out_rows, columns=GENE_LMM_COLUMNS).sort_values(
+        ["focal_var", "gene_id"], kind="mergesort"
+    ).reset_index(drop=True)
     if not out.empty:
         out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
         out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
