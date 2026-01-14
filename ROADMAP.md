@@ -298,14 +298,31 @@ Goal: ensure the benchmark reflects what we can do in real data, where we only h
 - [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
 - [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
-#### P4.3 — Response Construction (PMD standardized residuals as the normalization)
-Goal: focus benchmark coverage on what we actually run in practice: downstream inference on PMD standardized residuals.
+#### P4.3 — Normalization + Response Construction (PMD + common-sense baselines)
+Goal: benchmark PMD standardized residuals **and** common-sense depth normalization approaches under the same confounding settings.
 
-- [ ] Keep `pmd_std_res` as the primary response construction (PMD runs on the count matrix; produces standardized residual-like z-scores).
-- [ ] Keep lightweight response baselines for sanity-checks (not “production normalization”):
-  - [ ] `log_counts` (no PMD; highlights depth confounding failure modes)
-  - [ ] `guide_zscore_log_counts` (fast PMD-like surrogate)
-- [ ] Ensure response-mode details are always recorded in `benchmark_report.json` and `sim_std_res.tsv` is written deterministically.
+- [ ] Refactor response construction into explicit stages (recorded in JSON; no silent behavior):
+  - [ ] `normalization_mode` (acts on counts before transform; used only for non-PMD response paths unless explicitly enabled)
+  - [ ] `transform_mode` (e.g., log)
+  - [ ] `standardize_mode` (e.g., per-guide z-score)
+  - [ ] `pmd_mode` (none vs PMD standardized residuals)
+- [ ] Implement `normalization_mode` options (deterministic; no extra deps):
+  - [ ] `none` (raw counts)
+  - [ ] `libsize_to_mean` (scale counts by `mean(libsize)/libsize`)
+  - [ ] `cpm` (counts per million by sample libsize)
+  - [ ] `median_ratio` (DESeq-style size factors; document assumptions + failure modes under composition shifts)
+- [ ] Implement `transform_mode` options:
+  - [ ] `log(count + pseudocount)` (current)
+  - [ ] `log(norm_count + pseudocount)` (applies after normalization)
+- [ ] Implement `standardize_mode` options:
+  - [ ] `none`
+  - [ ] `per_guide_zscore` (fast PMD-like surrogate)
+- [ ] Keep PMD standardized residuals as an additional (not exclusive) response construction:
+  - [ ] `pmd_mode=std_res` runs PMD on the count matrix (treat as a normalization layer)
+  - [ ] record `pmd_n_boot` and `pmd_seed` in JSON for reproducibility
+- [ ] Ensure each response pipeline writes a clearly named artifact bundle in the output dir:
+  - [ ] `sim_std_res.tsv` (final response matrix used for downstream inference)
+  - [ ] a small JSON note of the pipeline (`normalization_mode`, `transform_mode`, `standardize_mode`, `pmd_mode`)
 
 #### P4.4 — Method Matrix (explicit; no conflation)
 Goal: evaluate methods × response constructions × depth handling without mixing outputs.
