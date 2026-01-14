@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from guide_pmd.gene_level import compute_gene_meta
 from guide_pmd.gene_level_lmm import compute_gene_lmm
 from guide_pmd.gene_level_qc import compute_gene_qc
+from guide_pmd.gene_level_stouffer import compute_gene_stouffer
 
 
 @dataclass(frozen=True)
@@ -134,7 +135,7 @@ class CountDepthBenchmarkConfig:
             raise ValueError("lmm_max_genes_per_focal_var must be >= 1 or None")
         if not self.methods:
             raise ValueError("methods must not be empty")
-        allowed_methods = {"meta", "lmm", "qc"}
+        allowed_methods = {"meta", "stouffer", "lmm", "qc"}
         unknown = set(self.methods).difference(allowed_methods)
         if unknown:
             raise ValueError(f"unknown methods: {sorted(unknown)}")
@@ -541,6 +542,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
 
     runtime: dict[str, float] = {}
     meta_df = pd.DataFrame()
+    stouffer_df = pd.DataFrame()
     lmm_df = pd.DataFrame()
     qc_df = pd.DataFrame()
 
@@ -558,6 +560,20 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         )
         runtime["meta"] = float(time.perf_counter() - t0)
         meta_df.to_csv(meta_out_path, sep="\t", index=False)
+
+    stouffer_out_path = os.path.join(out_dir, "PMD_std_res_gene_stouffer.tsv")
+    if "stouffer" in cfg.methods:
+        t0 = time.perf_counter()
+        stouffer_df = compute_gene_stouffer(
+            std_res_df,
+            ann_df,
+            mm,
+            focal_vars=focal_vars,
+            gene_id_col=1,
+            add_intercept=True,
+        )
+        runtime["stouffer"] = float(time.perf_counter() - t0)
+        stouffer_df.to_csv(stouffer_out_path, sep="\t", index=False)
 
     lmm_out_path = os.path.join(out_dir, "PMD_std_res_gene_lmm.tsv")
     lmm_sel_out_path = os.path.join(out_dir, "PMD_std_res_gene_lmm_selection.tsv")
@@ -625,10 +641,13 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
 
     # Evaluate against truth at the gene level.
     meta_join = truth_gene.merge(meta_df, on="gene_id", how="left") if not meta_df.empty else truth_gene.copy()
+    stouffer_join = truth_gene.merge(stouffer_df, on="gene_id", how="left") if not stouffer_df.empty else truth_gene.copy()
     lmm_join = truth_gene.merge(lmm_df, on="gene_id", how="left") if not lmm_df.empty else truth_gene.copy()
 
     meta_null = meta_join.loc[~meta_join["is_signal"], "p"]
     meta_sig = meta_join.loc[meta_join["is_signal"], "p"]
+    stouffer_null = stouffer_join.loc[~stouffer_join["is_signal"], "p"]
+    stouffer_sig = stouffer_join.loc[stouffer_join["is_signal"], "p"]
 
     lrt_p = lmm_join["lrt_p"] if "lrt_p" in lmm_join.columns else pd.Series(dtype=float)
     wald_p = lmm_join["wald_p"] if "wald_p" in lmm_join.columns else pd.Series(dtype=float)
@@ -648,6 +667,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "truth_gene_tsv": truth_path,
             "truth_guide_tsv": truth_guide_path,
             "gene_meta_tsv": meta_out_path if not meta_df.empty else "",
+            "gene_stouffer_tsv": stouffer_out_path if not stouffer_df.empty else "",
             "gene_lmm_tsv": lmm_out_path if "lmm" in cfg.methods else "",
             "gene_lmm_selection_tsv": lmm_sel_out_path if lmm_selection is not None else "",
             "gene_qc_tsv": qc_out_path if "qc" in cfg.methods else "",
@@ -664,6 +684,20 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "fdr": _fdr_summary(meta_join["p_adj"], meta_join["is_signal"], q=cfg.fdr_q),
             "confusion_alpha": _confusion(meta_called_alpha, meta_join["is_signal"].to_numpy(dtype=bool)),
             "confusion_fdr_q": _confusion(meta_called_q, meta_join["is_signal"].to_numpy(dtype=bool)),
+        }
+    if "stouffer" in cfg.methods and not stouffer_df.empty:
+        st_p = stouffer_join["p"].to_numpy(dtype=float)
+        st_p_adj = stouffer_join["p_adj"].to_numpy(dtype=float)
+        is_signal_arr = stouffer_join["is_signal"].to_numpy(dtype=bool)
+
+        st_called_alpha = np.isfinite(st_p) & (st_p < float(cfg.alpha))
+        st_called_q = np.isfinite(st_p_adj) & (st_p_adj < float(cfg.fdr_q))
+        report["stouffer"] = {
+            "null": _summarize_p(stouffer_null, alpha=cfg.alpha),
+            "signal": _summarize_p(stouffer_sig, alpha=cfg.alpha),
+            "fdr": _fdr_summary(stouffer_join["p_adj"], stouffer_join["is_signal"], q=cfg.fdr_q),
+            "confusion_alpha": _confusion(st_called_alpha, is_signal_arr),
+            "confusion_fdr_q": _confusion(st_called_q, is_signal_arr),
         }
     if "lmm" in cfg.methods and not lmm_df.empty:
         lrt_p_arr = lrt_p.to_numpy(dtype=float) if not lrt_p.empty else np.asarray([], dtype=float)
@@ -708,6 +742,16 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             wrote_any_plot = True
         else:
             qq["meta_p_null"] = _qq_stats(meta_null)
+
+    if "stouffer" in cfg.methods and not stouffer_df.empty:
+        if bool(cfg.qq_plots):
+            os.makedirs(fig_dir, exist_ok=True)
+            out_path = os.path.join(fig_dir, "qq_stouffer_p_null.png")
+            report["outputs"]["stouffer_p_null_png"] = out_path
+            qq["stouffer_p_null"] = _write_qq_plot(stouffer_null, out_path=out_path, title="Stouffer p (null)")
+            wrote_any_plot = True
+        else:
+            qq["stouffer_p_null"] = _qq_stats(stouffer_null)
 
     if "lmm" in cfg.methods and not lmm_df.empty and "lrt_p" in lmm_join.columns:
         if bool(cfg.qq_plots):
@@ -830,9 +874,9 @@ def main() -> None:
         "--methods",
         type=str,
         nargs="+",
-        choices=["meta", "lmm", "qc"],
-        default=["meta", "lmm", "qc"],
-        help="Which gene-level methods to run (default: meta lmm qc).",
+        choices=["meta", "stouffer", "lmm", "qc"],
+        default=["meta", "stouffer", "lmm", "qc"],
+        help="Which gene-level methods to run (default: meta stouffer lmm qc).",
     )
     args = parser.parse_args()
 

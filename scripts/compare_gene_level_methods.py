@@ -53,10 +53,12 @@ def _subset_by_focal(df: pd.DataFrame, focal_var: str) -> pd.DataFrame:
 def compare_gene_level_methods(gene_level_dir: str) -> tuple[pd.DataFrame, dict[str, object]]:
     gene_level_dir = str(gene_level_dir)
     meta_path = os.path.join(gene_level_dir, "PMD_std_res_gene_meta.tsv")
+    stouffer_path = os.path.join(gene_level_dir, "PMD_std_res_gene_stouffer.tsv")
     lmm_path = os.path.join(gene_level_dir, "PMD_std_res_gene_lmm.tsv")
     qc_path = os.path.join(gene_level_dir, "PMD_std_res_gene_qc.tsv")
 
     meta_df = _read_tsv(meta_path)
+    stouffer_df = _read_tsv(stouffer_path) if os.path.exists(stouffer_path) else pd.DataFrame()
     lmm_df = _read_tsv(lmm_path)
     qc_df = _read_tsv(qc_path)
 
@@ -74,12 +76,14 @@ def compare_gene_level_methods(gene_level_dir: str) -> tuple[pd.DataFrame, dict[
     notes: dict[str, object] = {
         "gene_level_dir": gene_level_dir,
         "meta_path": meta_path,
+        "stouffer_path": stouffer_path if os.path.exists(stouffer_path) else "",
         "lmm_path": lmm_path,
         "qc_path": qc_path,
     }
 
     for focal_var in focal_vars:
         meta_f = _subset_by_focal(meta_df, focal_var)
+        stouffer_f = _subset_by_focal(stouffer_df, focal_var) if not stouffer_df.empty else pd.DataFrame()
         lmm_f = _subset_by_focal(lmm_df, focal_var)
         qc_f = _subset_by_focal(qc_df, focal_var)
 
@@ -122,10 +126,21 @@ def compare_gene_level_methods(gene_level_dir: str) -> tuple[pd.DataFrame, dict[
                 qc_theta_corr = _pearson(qc_join["theta"], qc_join["beta_median"])
                 qc_theta_spearman = _spearman(qc_join["theta"], qc_join["beta_median"])
 
+        # Stouffer comparisons (p-value correlations and direction agreement vs meta).
+        st_p_spearman = float("nan")
+        st_theta_sign_match = float("nan")
+        if not stouffer_f.empty:
+            st_join = meta_f.merge(stouffer_f, on=key_cols, how="inner", suffixes=("_meta", "_stouffer"))
+            if not st_join.empty:
+                st_p_spearman = _spearman(st_join["p_meta"], st_join["p_stouffer"]) if "p_stouffer" in st_join.columns else float("nan")
+                if "stouffer_t" in st_join.columns:
+                    st_theta_sign_match = _sign_match(st_join["theta_meta"], st_join["stouffer_t"])
+
         summaries.append(
             {
                 "focal_var": focal_var,
                 "n_meta": int(meta_f.shape[0]),
+                "n_stouffer": int(stouffer_f.shape[0]) if not stouffer_f.empty else 0,
                 "n_qc": int(qc_f.shape[0]),
                 "n_lmm_rows": int(lmm_f.shape[0]),
                 "n_lmm_success": int(lmm_f.loc[lmm_f["method"].astype(str) == "lmm"].shape[0]),
@@ -145,6 +160,8 @@ def compare_gene_level_methods(gene_level_dir: str) -> tuple[pd.DataFrame, dict[
                 "max_abs_p_diff_meta_fallback": max_abs_p_diff_fallback,
                 "qc_theta_corr_meta_vs_beta_median": qc_theta_corr,
                 "qc_theta_spearman_meta_vs_beta_median": qc_theta_spearman,
+                "spearman_p_meta_vs_stouffer_p": st_p_spearman,
+                "sign_match_meta_theta_vs_stouffer_t": st_theta_sign_match,
             }
         )
 
@@ -196,4 +213,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

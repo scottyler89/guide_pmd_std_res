@@ -109,7 +109,14 @@ def main() -> None:
         default=False,
         help="Write QQ plot PNGs for each run (default: disabled; stats are still computed).",
     )
-    parser.add_argument("--methods", type=str, nargs="+", choices=["meta", "lmm", "qc"], default=["meta", "qc"])
+    parser.add_argument(
+        "--methods",
+        type=str,
+        nargs="+",
+        choices=["meta", "stouffer", "lmm", "qc"],
+        default=["meta", "stouffer", "qc"],
+        help="Which gene-level methods to run (default: meta stouffer qc).",
+    )
     parser.add_argument(
         "--lmm-scope",
         type=str,
@@ -379,6 +386,19 @@ def main() -> None:
             row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
             row["meta_q_tpr"] = report["meta"]["confusion_fdr_q"]["tpr"]
             row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
+        if "stouffer" in report:
+            row["stouffer_null_mean_p"] = report["stouffer"]["null"]["mean"]
+            row["stouffer_null_prop_lt_alpha"] = report["stouffer"]["null"]["prop_lt_alpha"]
+            row["stouffer_null_lambda_gc"] = qq.get("stouffer_p_null", {}).get("lambda_gc")
+            row["stouffer_alpha_fp"] = report["stouffer"]["confusion_alpha"]["fp"]
+            row["stouffer_alpha_fpr"] = report["stouffer"]["confusion_alpha"]["fpr"]
+            row["stouffer_alpha_tpr"] = report["stouffer"]["confusion_alpha"]["tpr"]
+            row["stouffer_alpha_fdr"] = report["stouffer"]["confusion_alpha"]["fdr"]
+            row["stouffer_alpha_n_called"] = report["stouffer"]["confusion_alpha"]["n_called"]
+            row["stouffer_q_fp"] = report["stouffer"]["confusion_fdr_q"]["fp"]
+            row["stouffer_q_fdr"] = report["stouffer"]["confusion_fdr_q"]["fdr"]
+            row["stouffer_q_tpr"] = report["stouffer"]["confusion_fdr_q"]["tpr"]
+            row["stouffer_q_n_called"] = report["stouffer"]["confusion_fdr_q"]["n_called"]
         if "lmm_lrt" in report:
             row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
             row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]

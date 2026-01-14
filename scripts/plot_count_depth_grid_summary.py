@@ -161,7 +161,7 @@ def main() -> None:
 
     plots_made = 0
 
-    for prefix in ["meta", "lmm_lrt", "lmm_wald"]:
+    for prefix in ["meta", "stouffer", "lmm_lrt", "lmm_wald"]:
         if not null_df.empty and x_tdm is not None:
             metric = f"{prefix}_null_lambda_gc"
             if metric in null_df.columns:
@@ -205,7 +205,7 @@ def main() -> None:
             plots_made += 1
 
     # Simple runtime scaling plots (when present).
-    for runtime_col in ["runtime_meta", "runtime_lmm", "runtime_qc"]:
+    for runtime_col in ["runtime_meta", "runtime_stouffer", "runtime_lmm", "runtime_qc"]:
         if runtime_col in df.columns and x_ngenes is not None:
             _plot_metric_grid(
                 df,
