@@ -192,6 +192,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 #### P3.6 — Figures (Add-on only)
 - [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
 - [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
+- [x] Agreement/disagreement figures (meta vs Plan A LMM): confusion matrices, significance-colored theta plots, theta-difference histograms.
 - [x] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
 - [x] Per-gene forest plot (per-guide slopes + SE) for explicit genes (no implicit top-N heuristic).
 - [x] Output directory + naming convention (e.g., `figures/gene_level/` with deterministic filenames).

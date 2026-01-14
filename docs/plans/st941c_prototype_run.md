@@ -90,3 +90,12 @@ After completion:
 python scripts/compare_gene_level_methods.py --out-dir .tmp/st941c/one_hot
 python scripts/triage_gene_level_disagreements.py --out-dir .tmp/st941c/one_hot --q 0.1 --top-n 50
 ```
+
+## Figures-only reruns (no recomputation)
+
+If you already have gene-level TSVs on disk, you can write figures without rerunning the full pipeline:
+
+```bash
+python scripts/write_gene_level_figures_from_tables.py --out-dir .tmp/st941c/dose_rank
+python scripts/write_gene_level_figures_from_tables.py --out-dir .tmp/st941c/one_hot
+```

@@ -121,6 +121,13 @@ Figures
 
 If enabled, figures are written under ``<out_dir>/figures/gene_level/`` with deterministic filenames.
 
+In addition to per-method volcano and QC plots, the figure set includes **method agreement/disagreement**
+views (meta vs Plan A LMM), such as:
+
+- significance agreement confusion matrices (FDR thresholded; default ``q=0.1``)
+- theta comparison plots colored by significance category
+- theta difference histograms (``theta_lmm - theta_meta``)
+
 Forest plots are generated only for gene ids explicitly provided via ``--gene-forest-genes``.
 
 CLI usage
