@@ -219,7 +219,9 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Add progress reporting (genes processed, failures, fallbacks).
 - [x] Add optional parallelization (careful: determinism + stable sorting).
   - [x] Plan A supports `--gene-lmm-jobs` (thread pool; preserves stable output sorting).
-- [ ] Add caching of per-gene fits (optional; keyed by inputs) to speed iteration.
+- [x] Add caching/checkpoint-resume for per-gene fits (optional; keyed by input fingerprints) to speed iteration.
+  - [x] CLI: `--gene-lmm-resume` and `--gene-lmm-checkpoint-every N`
+  - [x] Artifacts: `PMD_std_res_gene_lmm.partial.tsv` and `PMD_std_res_gene_lmm.partial.meta.json` (fail-fast on meta mismatch)
 
 #### P3.10 — Docs + Release
 - [x] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
