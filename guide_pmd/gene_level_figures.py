@@ -89,6 +89,113 @@ def _write_volcano(
     plt.close(fig)
 
 
+def _write_histogram(
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    title: str,
+    x_label: str,
+    out_path: str,
+    bins: int = 50,
+) -> None:
+    plt = _require_matplotlib()
+    data = df[[x_col]].replace([np.inf, -np.inf], np.nan).dropna()
+    x = data[x_col].to_numpy(dtype=float)
+
+    fig = plt.figure(figsize=(6, 4), dpi=150)
+    ax = fig.add_subplot(1, 1, 1)
+    ax.hist(x, bins=int(bins), color="#1f77b4", alpha=0.85, edgecolor="none")
+    ax.axvline(0.0, color="gray", linewidth=0.8, linestyle="--")
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("count")
+    ax.grid(True, linewidth=0.3, alpha=0.5)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def _write_confusion_matrix(
+    counts: np.ndarray,
+    *,
+    title: str,
+    x_label: str,
+    y_label: str,
+    out_path: str,
+    x_ticklabels: tuple[str, str] = ("False", "True"),
+    y_ticklabels: tuple[str, str] = ("False", "True"),
+) -> None:
+    plt = _require_matplotlib()
+    counts = np.asarray(counts, dtype=float)
+    if counts.shape != (2, 2):
+        raise ValueError("confusion matrix counts must be 2x2")
+
+    fig = plt.figure(figsize=(4.6, 4.2), dpi=150)
+    ax = fig.add_subplot(1, 1, 1)
+    im = ax.imshow(counts, cmap="Blues", vmin=0.0)
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(list(x_ticklabels))
+    ax.set_yticklabels(list(y_ticklabels))
+
+    for (i, j), val in np.ndenumerate(counts):
+        ax.text(j, i, f"{int(val)}", ha="center", va="center", color="black", fontsize=10)
+
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def _write_scatter_categories(
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    cat_x: pd.Series,
+    cat_y: pd.Series,
+    title: str,
+    x_label: str,
+    y_label: str,
+    out_path: str,
+) -> None:
+    plt = _require_matplotlib()
+    data = df[[x_col, y_col]].replace([np.inf, -np.inf], np.nan).dropna()
+    if data.empty:
+        return
+    idx = data.index
+
+    x = data[x_col].to_numpy(dtype=float)
+    y = data[y_col].to_numpy(dtype=float)
+    cx = cat_x.reindex(idx).fillna(False).astype(bool).to_numpy()
+    cy = cat_y.reindex(idx).fillna(False).astype(bool).to_numpy()
+
+    groups = [
+        ("neither", (~cx) & (~cy), "#9aa0a6"),
+        ("x_only", (cx) & (~cy), "#e67e22"),
+        ("y_only", (~cx) & (cy), "#8e44ad"),
+        ("both", (cx) & (cy), "#2ecc71"),
+    ]
+
+    fig = plt.figure(figsize=(6, 5), dpi=150)
+    ax = fig.add_subplot(1, 1, 1)
+    for label, mask, color in groups:
+        if not np.any(mask):
+            continue
+        ax.scatter(x[mask], y[mask], s=10, alpha=0.75, edgecolors="none", color=color, label=label)
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.grid(True, linewidth=0.3, alpha=0.5)
+    ax.legend(loc="best", fontsize=8, frameon=False)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def write_gene_level_figures(
     output_dir: str,
     *,
@@ -96,6 +203,7 @@ def write_gene_level_figures(
     gene_meta: pd.DataFrame | None = None,
     gene_lmm: pd.DataFrame | None = None,
     gene_qc: pd.DataFrame | None = None,
+    agreement_q: float = 0.1,
 ) -> list[str]:
     """
     Write deterministic figures for the gene-level tables that are present.
@@ -190,13 +298,18 @@ def write_gene_level_figures(
         and (not gene_meta.empty)
         and (not gene_lmm.empty)
     ):
-        meta_cols = ["gene_id", "focal_var", "theta", "p"]
-        lmm_cols = ["gene_id", "focal_var", "theta", "lrt_p", "wald_p"]
+        meta_cols = ["gene_id", "focal_var", "theta", "p", "p_adj"]
+        lmm_cols = ["gene_id", "focal_var", "theta", "lrt_p", "wald_p", "lrt_p_adj", "wald_p_adj", "method"]
         meta_sub = gene_meta[meta_cols].rename(columns={"theta": "theta_meta", "p": "p_meta"})
         lmm_sub = gene_lmm[lmm_cols].rename(columns={"theta": "theta_lmm"})
         joined = meta_sub.merge(lmm_sub, on=["gene_id", "focal_var"], how="inner")
         if not joined.empty:
+            q = float(agreement_q)
+            q_safe = _sanitize_filename_component(f"q{q:g}")
             for focal_var, sub in _for_each_focal_var(joined):
+                sub = sub.loc[sub["method"].astype(str) == "lmm"].copy()
+                if sub.empty:
+                    continue
                 out_path = os.path.join(output_dir, f"{prefix}_gene_compare_theta__{focal_var}.png")
                 _write_scatter(
                     sub,
@@ -242,6 +355,129 @@ def write_gene_level_figures(
                         out_path=out_path,
                     )
                     written.append(out_path)
+
+                # Agreement / disagreement summaries (FDR thresholded; explicit q)
+                if ("p_adj" in sub.columns) and ("lrt_p_adj" in sub.columns):
+                    meta_sig = sub["p_adj"].astype(float) <= q
+                    lrt_sig = sub["lrt_p_adj"].astype(float) <= q
+                    counts = np.array(
+                        [
+                            [int((~meta_sig & ~lrt_sig).sum()), int((~meta_sig & lrt_sig).sum())],
+                            [int((meta_sig & ~lrt_sig).sum()), int((meta_sig & lrt_sig).sum())],
+                        ],
+                        dtype=float,
+                    )
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_confusion_meta_vs_lmm_lrt__{focal_var}__{q_safe}.png",
+                    )
+                    _write_confusion_matrix(
+                        counts,
+                        title=f"FDR agreement: meta vs LMM LRT ({focal_var}; q={q:g})",
+                        x_label="LMM LRT significant",
+                        y_label="Meta significant",
+                        out_path=out_path,
+                        x_ticklabels=("no", "yes"),
+                        y_ticklabels=("no", "yes"),
+                    )
+                    written.append(out_path)
+
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_theta_sig_meta_vs_lmm_lrt__{focal_var}__{q_safe}.png",
+                    )
+                    _write_scatter_categories(
+                        sub,
+                        x_col="theta_meta",
+                        y_col="theta_lmm",
+                        cat_x=meta_sig,
+                        cat_y=lrt_sig,
+                        title=f"Theta: meta vs LMM (LRT sig; {focal_var}; q={q:g})",
+                        x_label="theta (meta)",
+                        y_label="theta (lmm)",
+                        out_path=out_path,
+                    )
+                    written.append(out_path)
+
+                if ("p_adj" in sub.columns) and ("wald_p_adj" in sub.columns):
+                    meta_sig = sub["p_adj"].astype(float) <= q
+                    wald_sig = sub["wald_p_adj"].astype(float) <= q
+                    counts = np.array(
+                        [
+                            [int((~meta_sig & ~wald_sig).sum()), int((~meta_sig & wald_sig).sum())],
+                            [int((meta_sig & ~wald_sig).sum()), int((meta_sig & wald_sig).sum())],
+                        ],
+                        dtype=float,
+                    )
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_confusion_meta_vs_lmm_wald__{focal_var}__{q_safe}.png",
+                    )
+                    _write_confusion_matrix(
+                        counts,
+                        title=f"FDR agreement: meta vs LMM Wald ({focal_var}; q={q:g})",
+                        x_label="LMM Wald significant",
+                        y_label="Meta significant",
+                        out_path=out_path,
+                        x_ticklabels=("no", "yes"),
+                        y_ticklabels=("no", "yes"),
+                    )
+                    written.append(out_path)
+
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_theta_sig_meta_vs_lmm_wald__{focal_var}__{q_safe}.png",
+                    )
+                    _write_scatter_categories(
+                        sub,
+                        x_col="theta_meta",
+                        y_col="theta_lmm",
+                        cat_x=meta_sig,
+                        cat_y=wald_sig,
+                        title=f"Theta: meta vs LMM (Wald sig; {focal_var}; q={q:g})",
+                        x_label="theta (meta)",
+                        y_label="theta (lmm)",
+                        out_path=out_path,
+                    )
+                    written.append(out_path)
+
+                if ("lrt_p_adj" in sub.columns) and ("wald_p_adj" in sub.columns):
+                    lrt_sig = sub["lrt_p_adj"].astype(float) <= q
+                    wald_sig = sub["wald_p_adj"].astype(float) <= q
+                    counts = np.array(
+                        [
+                            [int((~lrt_sig & ~wald_sig).sum()), int((~lrt_sig & wald_sig).sum())],
+                            [int((lrt_sig & ~wald_sig).sum()), int((lrt_sig & wald_sig).sum())],
+                        ],
+                        dtype=float,
+                    )
+                    out_path = os.path.join(
+                        output_dir,
+                        f"{prefix}_gene_agreement_confusion_lrt_vs_wald__{focal_var}__{q_safe}.png",
+                    )
+                    _write_confusion_matrix(
+                        counts,
+                        title=f"FDR agreement: LRT vs Wald ({focal_var}; q={q:g})",
+                        x_label="Wald significant",
+                        y_label="LRT significant",
+                        out_path=out_path,
+                        x_ticklabels=("no", "yes"),
+                        y_ticklabels=("no", "yes"),
+                    )
+                    written.append(out_path)
+
+                # Effect disagreements
+                sub = sub.assign(theta_diff=(sub["theta_lmm"].astype(float) - sub["theta_meta"].astype(float)))
+                out_path = os.path.join(output_dir, f"{prefix}_gene_agreement_theta_diff_hist__{focal_var}.png")
+                _write_histogram(
+                    sub,
+                    x_col="theta_diff",
+                    title=f"Theta difference (LMM - meta) ({focal_var})",
+                    x_label="theta_lmm - theta_meta",
+                    out_path=out_path,
+                    bins=60,
+                )
+                written.append(out_path)
 
     if gene_qc is not None and (not gene_qc.empty):
         for focal_var, sub in _for_each_focal_var(gene_qc):
