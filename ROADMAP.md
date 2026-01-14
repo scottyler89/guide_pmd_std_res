@@ -303,6 +303,7 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
 - [ ] Refactor response construction into explicit stages (recorded in JSON; no silent behavior):
   - [ ] `normalization_mode` (acts on counts before transform; used only for non-PMD response paths unless explicitly enabled)
   - [ ] `transform_mode` (e.g., log)
+  - [ ] `logratio_mode` (optional; operates across features within each sample)
   - [ ] `standardize_mode` (keep minimal; avoid axes that are pure rescalings for OLS-derived p-values)
   - [ ] `pmd_mode` (none vs PMD standardized residuals)
 - [ ] Implement `normalization_mode` options (deterministic; no extra deps):
@@ -313,6 +314,11 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
 - [ ] Implement `transform_mode` options:
   - [ ] `log(count + pseudocount)` (current)
   - [ ] `log(norm_count + pseudocount)` (applies after normalization)
+- [ ] Implement `logratio_mode` options (compositional transforms that can change significance under depth confounding):
+  - [ ] `none`
+  - [ ] `clr_all` (Centered Log-Ratio: subtract per-sample mean log-count across all guides; depth-invariant under pure multiplicative sampling)
+  - [ ] `alr_refset` (Additive Log-Ratio to an explicit reference set: subtract per-sample mean log-count over a caller-specified guide set, e.g., non-targeting controls)
+  - [ ] Do **not** add ILR by default (basis-dependent and hard to interpret at the per-guide level; consider only if a multivariate model truly requires it)
 - [ ] Implement `standardize_mode` options:
   - [ ] `none`
   - [ ] `per_guide_zscore` (optional; note: for per-guide OLS with an intercept this does **not** change t/p, so treat as LMM-only sensitivity / numerical-stability experiment)
