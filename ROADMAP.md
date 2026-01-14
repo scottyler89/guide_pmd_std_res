@@ -98,6 +98,10 @@ Goal: low-overhead gene-level inference using guide-level fits; also used as a v
 - [x] Output spec (new file; stable schema + sorting):
   - [x] `PMD_std_res_gene_meta.tsv`
 
+#### P3.3.1 — Historical combined-statistics (Stouffer; continuity + benchmark coverage)
+- [x] Implement Stouffer-style combined statistics from per-guide OLS t-values (additive; no baseline changes).
+- [x] Output spec (new file; stable schema + sorting): `PMD_std_res_gene_stouffer.tsv`
+
 #### P3.4 — Plan A (Primary): Observation-level mixed model per gene (RI / RI+RS) + LRT
 Goal: likelihood-based gene-level inference using all `y_{gjk}` (Decision B option 1; Decision C RI+RS).
 
@@ -191,6 +195,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 
 #### P3.6 — Figures (Add-on only)
 - [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
+- [x] Stouffer volcano and p-value comparisons vs Plan B (never conflates effect sizes).
 - [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
 - [x] Agreement/disagreement figures (meta vs Plan A LMM): confusion matrices, significance-colored theta plots, theta-difference histograms.
 - [x] Heterogeneity QC plots (tau vs effect; sign agreement vs p).
@@ -202,7 +207,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] `--gene-level` / `--no-gene-level`
   - [x] `--focal-vars ...`
   - [x] `--gene-id-col ...`
-  - [x] `--gene-methods ...` (supports: `meta`, `lmm`, `qc`, `flagged`, `mixture`, `tmeta`)
+  - [x] `--gene-methods ...` (supports: `meta`, `stouffer`, `lmm`, `qc`, `flagged`, `mixture`, `tmeta`)
   - [x] `--gene-out-dir ...`
   - [x] `--gene-figures` / `--no-gene-figures`, `--gene-figures-dir`, and `--gene-forest-genes`
 - [x] Add Python API entry point(s) that can run gene-level analysis using in-memory `std_res` + model matrix.
@@ -210,6 +215,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 
 #### P3.8 — Testing + Validation (focus on invariants, calibration, and regressions)
 - [x] Unit tests for meta-analysis math (tau estimator; edge cases `m_g=1/2`, zero variance).
+- [x] Unit tests for Stouffer math (combined t-statistic + p/FDR behavior).
 - [x] Unit tests for LMM rubric behavior (RI vs RI+RS fallbacks).
 - [x] Golden tests for baseline outputs (byte-for-byte).
 - [x] Cross-check tests: Plan A and Plan B agree on simple simulated data when assumptions match.
@@ -252,7 +258,7 @@ Phase A — Minimal benchmark harness (deterministic; local)
 - [x] Support a full PMD response mode (small simulations only):
   - [x] `pmd_std_res` with `--pmd-n-boot` and deterministic `--pmd-seed`
 - [x] Run Plan B / Plan A / Plan C **directly** on the simulated response matrix:
-  - [x] write `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`
+  - [x] write `PMD_std_res_gene_meta.tsv`, `PMD_std_res_gene_stouffer.tsv`, `PMD_std_res_gene_lmm.tsv`, `PMD_std_res_gene_qc.tsv`
   - [x] write a strict machine-readable `benchmark_report.json` (valid JSON; no `NaN`) with:
     - [x] runtime summaries
     - [x] confusion matrices at `p < alpha` and `p_adj < q` (TP/FP/TN/FN, FDR/TPR/FPR)
