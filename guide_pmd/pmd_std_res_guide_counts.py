@@ -2,6 +2,8 @@ import os
 import shutil
 import gc
 import argparse
+import hashlib
+import json
 import numpy as np
 import pandas as pd
 from scipy.stats import t
@@ -24,6 +26,66 @@ def nan_fdr(in_vect):
     out_fdr[good_idxs]=adj
     return(out_fdr)
 ######################################
+
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha256_strs(values: list[str]) -> str:
+    h = hashlib.sha256()
+    for v in values:
+        h.update(str(v).encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _sha256_pairs(pairs: list[tuple[str, str]]) -> str:
+    h = hashlib.sha256()
+    for left, right in pairs:
+        h.update(str(left).encode("utf-8"))
+        h.update(b"\0")
+        h.update(str(right).encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _sha256_gene_id_map(gene_ids: pd.Series) -> str:
+    if gene_ids.index.has_duplicates:
+        raise ValueError("gene_ids index must not contain duplicates (guide_id)")
+    pairs = list(zip(gene_ids.index.astype(str).tolist(), gene_ids.astype(str).tolist(), strict=True))
+    pairs.sort(key=lambda x: x[0])
+    return _sha256_pairs(pairs)
+
+
+def _sha256_gene_lmm_selection(selection_table: pd.DataFrame) -> str:
+    required = {"gene_id", "focal_var", "selected"}
+    missing = required.difference(set(selection_table.columns))
+    if missing:
+        raise ValueError(f"gene_lmm_selection missing required column(s): {sorted(missing)}")
+    df = selection_table.loc[:, ["gene_id", "focal_var", "selected"]].copy()
+    df["gene_id"] = df["gene_id"].astype(str)
+    df["focal_var"] = df["focal_var"].astype(str)
+    df["selected"] = df["selected"].astype(bool).astype(int).astype(str)
+    df = df.sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
+    pairs = list(zip(df["gene_id"].tolist(), df["focal_var"].tolist(), strict=True))
+    state = _sha256_pairs(pairs)
+    state2 = _sha256_strs(df["selected"].tolist())
+    return hashlib.sha256(f"{state}\0{state2}".encode("utf-8")).hexdigest()
+
+
+def _load_json(path: str) -> dict[str, object]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path: str, data: dict[str, object]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
 
 def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
     """
@@ -246,7 +308,9 @@ def pmd_std_res_and_stats(input_file,
                             gene_lmm_audit_seed: int = 123456,
                             gene_lmm_max_genes_per_focal_var: int | None = None,
                             gene_lmm_explicit_genes: list[str] | None = None,
-                            gene_lmm_jobs: int = 1):
+                            gene_lmm_jobs: int = 1,
+                            gene_lmm_resume: bool = False,
+                            gene_lmm_checkpoint_every: int = 200):
     """
     Takes as input a pd.read_csv readable tsv & optionally a similar model matrix file if you want to run stats.
     This is the main function that will
@@ -436,18 +500,186 @@ def pmd_std_res_and_stats(input_file,
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_selection.tsv")
                 gene_lmm_selection.to_csv(gene_out_path, sep="\t", index=False)
 
-                gene_lmm = gene_level_lmm_mod.compute_gene_lmm(
-                    gene_response,
-                    annotation_table,
-                    gene_mm,
-                    focal_vars=focal_vars,
-                    gene_id_col=gene_id_col,
-                    add_intercept=gene_add_intercept,
-                    meta_results=gene_meta,
-                    selection_table=gene_lmm_selection,
-                    n_jobs=int(gene_lmm_jobs),
-                    progress=bool(gene_progress),
-                )
+                if gene_lmm_resume:
+                    gene_lmm_checkpoint_every = int(gene_lmm_checkpoint_every)
+                    if gene_lmm_checkpoint_every < 1:
+                        raise ValueError("gene_lmm_checkpoint_every must be >= 1")
+                    if std_res_file is None:
+                        raise ValueError("gene_lmm_resume requires std_res_file (precomputed PMD standardized residuals)")
+                    if gene_meta is None:
+                        raise RuntimeError("internal error: gene_meta is required for lmm resume")  # pragma: no cover
+
+                    partial_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.partial.tsv")
+                    meta_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.partial.meta.json")
+
+                    gene_ids = gene_level_mod._get_gene_ids(annotation_table, gene_id_col)
+                    resume_meta = {
+                        "schema_version": 1,
+                        "gene_id_col": int(gene_id_col),
+                        "gene_add_intercept": bool(gene_add_intercept),
+                        "focal_vars": [str(v) for v in focal_vars],
+                        "std_res_file_sha256": _sha256_file(std_res_file),
+                        "model_matrix_file_sha256": _sha256_file(model_matrix_file),
+                        "gene_id_map_sha256": _sha256_gene_id_map(gene_ids),
+                        "selection_sha256": _sha256_gene_lmm_selection(gene_lmm_selection),
+                        "response_shape": [int(gene_response.shape[0]), int(gene_response.shape[1])],
+                        "response_index_sha256": _sha256_strs(gene_response.index.astype(str).tolist()),
+                        "response_columns_sha256": _sha256_strs(gene_response.columns.astype(str).tolist()),
+                        "model_matrix_shape": [int(gene_mm.shape[0]), int(gene_mm.shape[1])],
+                        "model_matrix_index_sha256": _sha256_strs(gene_mm.index.astype(str).tolist()),
+                        "model_matrix_columns_sha256": _sha256_strs(gene_mm.columns.astype(str).tolist()),
+                        "gene_lmm_columns": list(gene_level_lmm_mod.GENE_LMM_COLUMNS),
+                        "selection_config": {
+                            "scope": str(gene_lmm_scope),
+                            "q_meta": float(gene_lmm_q_meta),
+                            "q_het": float(gene_lmm_q_het),
+                            "audit_n": int(gene_lmm_audit_n),
+                            "audit_seed": int(gene_lmm_audit_seed),
+                            "max_genes_per_focal_var": gene_lmm_max_genes_per_focal_var,
+                            "explicit_genes": [] if gene_lmm_explicit_genes is None else [str(g) for g in gene_lmm_explicit_genes],
+                        },
+                        "lmm_config": {
+                            "allow_random_slope": True,
+                            "min_guides_random_slope": 3,
+                            "max_iter": 200,
+                            "fallback_to_meta": True,
+                        },
+                    }
+
+                    if os.path.exists(partial_path):
+                        if not os.path.exists(meta_path):
+                            raise ValueError(
+                                f"gene_lmm_resume: missing checkpoint meta file: {meta_path} (delete {partial_path} to restart)"
+                            )
+                        prev = _load_json(meta_path)
+                        if prev != resume_meta:
+                            diff_keys = sorted(set(prev.keys()).union(set(resume_meta.keys())))
+                            mismatched = [k for k in diff_keys if prev.get(k) != resume_meta.get(k)]
+                            raise ValueError(
+                                "gene_lmm_resume: checkpoint meta mismatch; delete checkpoint files to restart. "
+                                f"Mismatched keys: {mismatched}"
+                            )
+                    else:
+                        if os.path.exists(meta_path):
+                            print("gene_lmm_resume: starting fresh checkpoint (overwriting meta)", flush=True)
+                        _write_json(meta_path, resume_meta)
+
+                    selected = gene_lmm_selection.loc[gene_lmm_selection["selected"].astype(bool), ["gene_id", "focal_var"]].copy()
+                    selected["gene_id"] = selected["gene_id"].astype(str)
+                    selected["focal_var"] = selected["focal_var"].astype(str)
+                    expected_keys = set(zip(selected["gene_id"].tolist(), selected["focal_var"].tolist(), strict=True))
+
+                    skip_keys: set[tuple[str, str]] = set()
+                    if os.path.exists(partial_path):
+                        checkpoint_keys = pd.read_csv(
+                            partial_path,
+                            sep="\t",
+                            usecols=["gene_id", "focal_var"],
+                            dtype={"gene_id": str, "focal_var": str},
+                        ).dropna()
+                        checkpoint_keys = checkpoint_keys[(checkpoint_keys["gene_id"] != "") & (checkpoint_keys["focal_var"] != "")]
+                        skip_keys = set(
+                            zip(
+                                checkpoint_keys["gene_id"].astype(str).tolist(),
+                                checkpoint_keys["focal_var"].astype(str).tolist(),
+                                strict=True,
+                            )
+                        )
+                        extra = skip_keys.difference(expected_keys)
+                        if extra:
+                            raise ValueError(
+                                "gene_lmm_resume: checkpoint contains task(s) not present in current selection table; "
+                                "delete checkpoint files to restart."
+                            )
+
+                    remaining = len(expected_keys.difference(skip_keys))
+                    if remaining:
+                        print(
+                            f"gene-level lmm: resume enabled ({len(skip_keys)}/{len(expected_keys)} done; {remaining} remaining)",
+                            flush=True,
+                        )
+
+                    buffer: list[dict[str, object]] = []
+                    header_needed = not os.path.exists(partial_path) or os.path.getsize(partial_path) == 0
+                    for row in gene_level_lmm_mod.iter_gene_lmm_rows(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        focal_vars=focal_vars,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        allow_random_slope=True,
+                        min_guides_random_slope=3,
+                        max_iter=200,
+                        fallback_to_meta=True,
+                        meta_results=gene_meta,
+                        selection_table=gene_lmm_selection,
+                        skip_keys=skip_keys,
+                        n_jobs=int(gene_lmm_jobs),
+                        progress=bool(gene_progress),
+                    ):
+                        buffer.append(row)
+                        if len(buffer) >= gene_lmm_checkpoint_every:
+                            pd.DataFrame(buffer, columns=gene_level_lmm_mod.GENE_LMM_COLUMNS).to_csv(
+                                partial_path,
+                                sep="\t",
+                                index=False,
+                                mode="a",
+                                header=header_needed,
+                            )
+                            header_needed = False
+                            buffer.clear()
+                    if buffer:
+                        pd.DataFrame(buffer, columns=gene_level_lmm_mod.GENE_LMM_COLUMNS).to_csv(
+                            partial_path,
+                            sep="\t",
+                            index=False,
+                            mode="a",
+                            header=header_needed,
+                        )
+                        buffer.clear()
+
+                    if expected_keys and not os.path.exists(partial_path):
+                        raise RuntimeError("gene_lmm_resume: checkpoint write failed (no partial output file)")
+                    if not expected_keys:
+                        gene_lmm = gene_level_lmm_mod.finalize_gene_lmm_table(
+                            pd.DataFrame(columns=gene_level_lmm_mod.GENE_LMM_COLUMNS)
+                        )
+                    else:
+                        raw = pd.read_csv(partial_path, sep="\t", dtype={"gene_id": str, "focal_var": str})
+                        expected_cols = list(gene_level_lmm_mod.GENE_LMM_COLUMNS)
+                        if set(raw.columns) != set(expected_cols):
+                            raise ValueError(
+                                "gene_lmm_resume: checkpoint schema mismatch; delete checkpoint files to restart. "
+                                f"Expected columns: {expected_cols} Got: {list(raw.columns)}"
+                            )
+                        raw = raw.reindex(columns=expected_cols)
+                        if raw.duplicated(subset=["gene_id", "focal_var"]).any():
+                            raise ValueError(
+                                "gene_lmm_resume: checkpoint contains duplicate (gene_id, focal_var) keys; "
+                                "delete checkpoint files to restart."
+                            )
+                        got_keys = set(zip(raw["gene_id"].astype(str).tolist(), raw["focal_var"].astype(str).tolist(), strict=True))
+                        missing = expected_keys.difference(got_keys)
+                        if missing:
+                            raise RuntimeError(
+                                f"gene_lmm_resume: missing {len(missing)} task(s) in checkpoint after run (unexpected)"
+                            )
+                        gene_lmm = gene_level_lmm_mod.finalize_gene_lmm_table(raw)
+                else:
+                    gene_lmm = gene_level_lmm_mod.compute_gene_lmm(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        focal_vars=focal_vars,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        meta_results=gene_meta,
+                        selection_table=gene_lmm_selection,
+                        n_jobs=int(gene_lmm_jobs),
+                        progress=bool(gene_progress),
+                    )
+
                 os.makedirs(gene_out_dir, exist_ok=True)
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm.tsv")
                 gene_lmm.to_csv(gene_out_path, sep="\t", index=False)
@@ -778,6 +1010,19 @@ def main():
         default=1,
         help="Parallel worker threads for Plan A LMM (default: 1).",
     )
+    parser.add_argument(
+        "--gene-lmm-resume",
+        dest="gene_lmm_resume",
+        action="store_true",
+        help="Enable checkpoint/resume for Plan A LMM (writes PMD_std_res_gene_lmm.partial.* under --gene-out-dir).",
+    )
+    parser.add_argument(
+        "--gene-lmm-checkpoint-every",
+        dest="gene_lmm_checkpoint_every",
+        type=int,
+        default=200,
+        help="When --gene-lmm-resume is set, append checkpoint rows every N tasks (default: 200).",
+    )
     # Parsing the arguments
     args = parser.parse_args()
     # Call the processing function with the parsed arguments
@@ -807,7 +1052,9 @@ def main():
                           gene_lmm_audit_seed=args.gene_lmm_audit_seed,
                           gene_lmm_max_genes_per_focal_var=args.gene_lmm_max_genes_per_focal_var,
                           gene_lmm_explicit_genes=args.gene_lmm_explicit_genes,
-                          gene_lmm_jobs=args.gene_lmm_jobs)
+                          gene_lmm_jobs=args.gene_lmm_jobs,
+                          gene_lmm_resume=args.gene_lmm_resume,
+                          gene_lmm_checkpoint_every=args.gene_lmm_checkpoint_every)
 
 
 

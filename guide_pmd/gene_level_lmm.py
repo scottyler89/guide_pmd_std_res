@@ -50,6 +50,25 @@ GENE_LMM_COLUMNS = [
 ]
 
 
+def finalize_gene_lmm_table(out: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure a canonical Plan A (LMM) table schema + stable sorting + per-focal-var FDR.
+
+    This is used by both the one-shot runner (`compute_gene_lmm`) and pipeline-level
+    checkpoint/resume orchestrators.
+    """
+    missing = [c for c in GENE_LMM_COLUMNS if c not in out.columns]
+    if missing:
+        out = out.copy()
+        for col in missing:
+            out[col] = np.nan
+    out = out[GENE_LMM_COLUMNS].sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
+    if not out.empty:
+        out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
+        out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
+    return out
+
+
 def _prepare_model_matrix(model_matrix: pd.DataFrame, *, add_intercept: bool) -> pd.DataFrame:
     mm = model_matrix.copy()
     if add_intercept and "Intercept" not in mm.columns:
@@ -719,10 +738,4 @@ def compute_gene_lmm(
             progress_min_seconds=progress_min_seconds,
         )
     )
-    out = pd.DataFrame(out_rows, columns=GENE_LMM_COLUMNS).sort_values(
-        ["focal_var", "gene_id"], kind="mergesort"
-    ).reset_index(drop=True)
-    if not out.empty:
-        out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
-        out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
-    return out
+    return finalize_gene_lmm_table(pd.DataFrame(out_rows, columns=GENE_LMM_COLUMNS))
