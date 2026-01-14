@@ -293,8 +293,7 @@ Goal: ensure the benchmark reflects what we can do in real data, where we only h
 - [x] Remove oracle adjustment from the benchmark: `--include-depth-covariate` uses `log_libsize_centered = log(colsum(counts))` (not simulated `log_depth`).
 - [ ] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
   - [ ] `none` (no depth adjustment)
-  - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible)
-  - [ ] `log_libsize_centered` (same but centered to mean 0 to reduce collinearity with intercept)
+  - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible; center internally as an implementation detail)
 - [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
 - [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
@@ -304,7 +303,7 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
 - [ ] Refactor response construction into explicit stages (recorded in JSON; no silent behavior):
   - [ ] `normalization_mode` (acts on counts before transform; used only for non-PMD response paths unless explicitly enabled)
   - [ ] `transform_mode` (e.g., log)
-  - [ ] `standardize_mode` (e.g., per-guide z-score)
+  - [ ] `standardize_mode` (keep minimal; avoid axes that are pure rescalings for OLS-derived p-values)
   - [ ] `pmd_mode` (none vs PMD standardized residuals)
 - [ ] Implement `normalization_mode` options (deterministic; no extra deps):
   - [ ] `none` (raw counts)
@@ -316,7 +315,7 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
   - [ ] `log(norm_count + pseudocount)` (applies after normalization)
 - [ ] Implement `standardize_mode` options:
   - [ ] `none`
-  - [ ] `per_guide_zscore` (fast PMD-like surrogate)
+  - [ ] `per_guide_zscore` (optional; note: for per-guide OLS with an intercept this does **not** change t/p, so treat as LMM-only sensitivity / numerical-stability experiment)
 - [ ] Keep PMD standardized residuals as an additional (not exclusive) response construction:
   - [ ] `pmd_mode=std_res` runs PMD on the count matrix (treat as a normalization layer)
   - [ ] record `pmd_n_boot` and `pmd_seed` in JSON for reproducibility
