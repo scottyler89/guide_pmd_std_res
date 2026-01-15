@@ -11,18 +11,8 @@ from datetime import timezone
 from importlib import metadata
 
 
-def _run(cmd: list[str]) -> str:
-    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
-    return proc.stdout
-
-
-def _run_and_last_line(cmd: list[str]) -> str:
-    out = _run(cmd).strip().splitlines()
-    if not out:
-        raise RuntimeError(f"expected a path on stdout; got empty stdout: {' '.join(cmd)}")
-    return out[-1].strip()
+def _run(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
 
 
 def _script_path(name: str) -> str:
@@ -285,10 +275,15 @@ def main() -> None:
             grid_tsv = existing_grid_tsv
         else:
             cmd = [sys.executable, _script_path("run_count_depth_grid.py"), "--out-dir", grid_out_dir]
+            if bool(args.resume):
+                cmd.append("--resume")
             if grid_args:
                 cmd.extend(grid_args)
             manifest["commands"]["grid"] = cmd
-            grid_tsv = _run_and_last_line(cmd)
+            _run(cmd)
+            grid_tsv = existing_grid_tsv
+            if not os.path.isfile(grid_tsv):
+                raise RuntimeError(f"grid runner finished but did not write expected TSV: {grid_tsv!r}")
     manifest["paths"]["grid_tsv"] = grid_tsv
 
     agg_tsv = os.path.join(out_dir, "count_depth_grid_summary_agg.tsv")
