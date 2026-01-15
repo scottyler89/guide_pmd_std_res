@@ -14,6 +14,36 @@ from itertools import product
 import pandas as pd
 
 
+_CONFUSION_KEYS = [
+    "n_total",
+    "n_signal",
+    "n_null",
+    "n_called",
+    "tp",
+    "fp",
+    "tn",
+    "fn",
+    "tpr",
+    "fpr",
+    "fdr",
+    "ppv",
+    "tnr",
+    "fnr",
+    "npv",
+    "accuracy",
+    "f1",
+    "balanced_accuracy",
+    "mcc",
+]
+
+
+def _add_confusion_metrics(row: dict[str, object], *, out_prefix: str, confusion: object) -> None:
+    if not isinstance(confusion, dict):
+        return
+    for k in _CONFUSION_KEYS:
+        row[f"{out_prefix}_{k}"] = confusion.get(k)
+
+
 def _stable_hash(obj: object) -> str:
     payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return hashlib.sha1(payload).hexdigest()[:12]
@@ -135,15 +165,8 @@ def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, o
         row["meta_theta_null_median"] = bias.get("median_null")
         row["meta_theta_null_abs_mean"] = bias.get("mean_abs_null")
         row["meta_theta_null_n"] = bias.get("n_null")
-        row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
-        row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
-        row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
-        row["meta_alpha_fdr"] = report["meta"]["confusion_alpha"]["fdr"]
-        row["meta_alpha_n_called"] = report["meta"]["confusion_alpha"]["n_called"]
-        row["meta_q_fp"] = report["meta"]["confusion_fdr_q"]["fp"]
-        row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
-        row["meta_q_tpr"] = report["meta"]["confusion_fdr_q"]["tpr"]
-        row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
+        _add_confusion_metrics(row, out_prefix="meta_alpha", confusion=report["meta"].get("confusion_alpha"))
+        _add_confusion_metrics(row, out_prefix="meta_q", confusion=report["meta"].get("confusion_fdr_q"))
     if "stouffer" in report:
         row["stouffer_null_mean_p"] = report["stouffer"]["null"]["mean"]
         row["stouffer_null_prop_lt_alpha"] = report["stouffer"]["null"]["prop_lt_alpha"]
@@ -153,15 +176,8 @@ def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, o
         row["stouffer_null_ks_n"] = report["stouffer"].get("ks_uniform_null", {}).get("n")
         row["stouffer_roc_auc"] = report["stouffer"].get("roc_auc")
         row["stouffer_average_precision"] = report["stouffer"].get("average_precision")
-        row["stouffer_alpha_fp"] = report["stouffer"]["confusion_alpha"]["fp"]
-        row["stouffer_alpha_fpr"] = report["stouffer"]["confusion_alpha"]["fpr"]
-        row["stouffer_alpha_tpr"] = report["stouffer"]["confusion_alpha"]["tpr"]
-        row["stouffer_alpha_fdr"] = report["stouffer"]["confusion_alpha"]["fdr"]
-        row["stouffer_alpha_n_called"] = report["stouffer"]["confusion_alpha"]["n_called"]
-        row["stouffer_q_fp"] = report["stouffer"]["confusion_fdr_q"]["fp"]
-        row["stouffer_q_fdr"] = report["stouffer"]["confusion_fdr_q"]["fdr"]
-        row["stouffer_q_tpr"] = report["stouffer"]["confusion_fdr_q"]["tpr"]
-        row["stouffer_q_n_called"] = report["stouffer"]["confusion_fdr_q"]["n_called"]
+        _add_confusion_metrics(row, out_prefix="stouffer_alpha", confusion=report["stouffer"].get("confusion_alpha"))
+        _add_confusion_metrics(row, out_prefix="stouffer_q", confusion=report["stouffer"].get("confusion_fdr_q"))
     if "lmm_lrt" in report:
         row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
         row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
@@ -185,13 +201,8 @@ def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, o
         row["lmm_lrt_theta_null_median"] = bias.get("median_null")
         row["lmm_lrt_theta_null_abs_mean"] = bias.get("mean_abs_null")
         row["lmm_lrt_theta_null_n"] = bias.get("n_null")
-        row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
-        row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
-        row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
-        row["lmm_lrt_alpha_fdr"] = report["lmm_lrt"]["confusion_alpha"]["fdr"]
-        row["lmm_lrt_q_fp"] = report["lmm_lrt"]["confusion_fdr_q"]["fp"]
-        row["lmm_lrt_q_fdr"] = report["lmm_lrt"]["confusion_fdr_q"]["fdr"]
-        row["lmm_lrt_q_tpr"] = report["lmm_lrt"]["confusion_fdr_q"]["tpr"]
+        _add_confusion_metrics(row, out_prefix="lmm_lrt_alpha", confusion=report["lmm_lrt"].get("confusion_alpha"))
+        _add_confusion_metrics(row, out_prefix="lmm_lrt_q", confusion=report["lmm_lrt"].get("confusion_fdr_q"))
     if "lmm_wald" in report:
         row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
         row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
@@ -215,13 +226,8 @@ def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, o
         row["lmm_wald_theta_null_median"] = bias.get("median_null")
         row["lmm_wald_theta_null_abs_mean"] = bias.get("mean_abs_null")
         row["lmm_wald_theta_null_n"] = bias.get("n_null")
-        row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
-        row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
-        row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
-        row["lmm_wald_alpha_fdr"] = report["lmm_wald"]["confusion_alpha"]["fdr"]
-        row["lmm_wald_q_fp"] = report["lmm_wald"]["confusion_fdr_q"]["fp"]
-        row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
-        row["lmm_wald_q_tpr"] = report["lmm_wald"]["confusion_fdr_q"]["tpr"]
+        _add_confusion_metrics(row, out_prefix="lmm_wald_alpha", confusion=report["lmm_wald"].get("confusion_alpha"))
+        _add_confusion_metrics(row, out_prefix="lmm_wald_q", confusion=report["lmm_wald"].get("confusion_fdr_q"))
 
     lmm_fit = report.get("lmm_fit", {})
     if isinstance(lmm_fit, dict) and lmm_fit:
