@@ -548,6 +548,20 @@ def main() -> None:
             row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
             row["lmm_wald_q_tpr"] = report["lmm_wald"]["confusion_fdr_q"]["tpr"]
 
+        lmm_fit = report.get("lmm_fit", {})
+        if isinstance(lmm_fit, dict) and lmm_fit:
+            row["lmm_n_total"] = lmm_fit.get("n_total")
+            row["lmm_n_attempted"] = lmm_fit.get("n_attempted")
+            row["lmm_frac_attempted"] = lmm_fit.get("frac_attempted")
+            row["lmm_lrt_ok_frac_attempted"] = lmm_fit.get("lrt_ok_frac_attempted")
+            row["lmm_wald_ok_frac_attempted"] = lmm_fit.get("wald_ok_frac_attempted")
+            row["lmm_n_selected"] = lmm_fit.get("n_selected")
+
+            fracs = lmm_fit.get("method_fracs", {}) if isinstance(lmm_fit.get("method_fracs", {}), dict) else {}
+            row["lmm_frac_method_lmm"] = fracs.get("lmm")
+            row["lmm_frac_method_meta_fallback"] = fracs.get("meta_fallback")
+            row["lmm_frac_method_failed"] = fracs.get("failed")
+
         rows.append(row)
 
     sort_cols = [

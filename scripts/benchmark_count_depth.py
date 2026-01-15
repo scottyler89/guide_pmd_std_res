@@ -1000,6 +1000,40 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         runtime["lmm"] = float(time.perf_counter() - t0)
         lmm_df.to_csv(lmm_out_path, sep="\t", index=False)
 
+    lmm_fit: dict[str, object] | None = None
+    if "lmm" in cfg.methods:
+        n_total = int(truth_gene.shape[0])
+        n_attempted = int(lmm_df.shape[0]) if not lmm_df.empty else 0
+        frac_attempted = float(n_attempted / n_total) if n_total > 0 else None
+        method_counts: dict[str, int] = {}
+        frac_method: dict[str, float] = {}
+        if n_attempted > 0 and "method" in lmm_df.columns:
+            vc = lmm_df["method"].astype(str).value_counts(dropna=False)
+            method_counts = {str(k): int(v) for k, v in vc.to_dict().items()}
+            frac_method = {str(k): float(int(v) / n_attempted) for k, v in vc.to_dict().items()}
+
+        lrt_ok_frac_attempted = None
+        if n_attempted > 0 and "lrt_ok" in lmm_df.columns:
+            lrt_ok_frac_attempted = float(np.mean(lmm_df["lrt_ok"].fillna(False).astype(bool)))
+        wald_ok_frac_attempted = None
+        if n_attempted > 0 and "wald_ok" in lmm_df.columns:
+            wald_ok_frac_attempted = float(np.mean(lmm_df["wald_ok"].fillna(False).astype(bool)))
+
+        n_selected = None
+        if lmm_selection is not None and (not lmm_selection.empty) and ("selected" in lmm_selection.columns):
+            n_selected = int(np.sum(lmm_selection["selected"].astype(bool)))
+
+        lmm_fit = {
+            "n_total": float(n_total),
+            "n_attempted": float(n_attempted),
+            "frac_attempted": frac_attempted,
+            "n_selected": float(n_selected) if n_selected is not None else None,
+            "method_counts": method_counts,
+            "method_fracs": frac_method,
+            "lrt_ok_frac_attempted": lrt_ok_frac_attempted,
+            "wald_ok_frac_attempted": wald_ok_frac_attempted,
+        }
+
     qc_out_path = os.path.join(out_dir, "PMD_std_res_gene_qc.tsv")
     if "qc" in cfg.methods:
         t0 = time.perf_counter()
@@ -1055,6 +1089,8 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         "design_matrix": design_matrix,
         "runtime_sec": runtime,
     }
+    if lmm_fit is not None:
+        report["lmm_fit"] = lmm_fit
 
     if "meta" in cfg.methods and not meta_df.empty:
         meta_null = meta_join.loc[~meta_join["is_signal"], "p"]

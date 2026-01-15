@@ -89,3 +89,8 @@ def test_benchmark_can_run_without_stouffer(tmp_path):
     proc = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=str(repo_root))
     report_path = proc.stdout.strip().splitlines()[-1].strip()
     assert report_path
+
+    with open(report_path, "r", encoding="utf-8") as f:
+        report = json.load(f)
+    assert "lmm_fit" in report
+    assert report["lmm_fit"]["n_attempted"] >= 0
