@@ -294,8 +294,8 @@ Goal: ensure the benchmark reflects what we can do in real data, where we only h
 - [x] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
   - [x] `none` (no depth adjustment)
   - [x] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible; center internally as an implementation detail)
-- [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
-- [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
+- [x] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
+- [x] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
 #### P4.3 — Normalization + Response Construction (PMD + common-sense baselines)
 Goal: benchmark PMD standardized residuals **and** common-sense depth normalization approaches under the same confounding settings.
@@ -315,15 +315,15 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
   - [x] `clr_all` (Centered Log-Ratio: subtract per-sample mean log-count across all guides; depth-invariant under pure multiplicative sampling)
   - [x] `alr_refset` (Additive Log-Ratio to an explicit reference set: subtract per-sample mean log-count over reference guides, e.g., non-targeting controls)
   - [x] Do **not** add ILR by default (basis-dependent and hard to interpret at the per-guide level; consider only if a multivariate model truly requires it)
-- [ ] Implement `standardize_mode` options:
-  - [ ] `none`
-  - [ ] `per_guide_zscore` (optional; note: for per-guide OLS with an intercept this does **not** change t/p, so treat as LMM-only sensitivity / numerical-stability experiment)
-- [ ] Keep PMD standardized residuals as an additional (not exclusive) response construction:
-  - [ ] `pmd_mode=std_res` runs PMD on the count matrix (treat as a normalization layer)
-  - [ ] record `pmd_n_boot` and `pmd_seed` in JSON for reproducibility
-- [ ] Ensure each response pipeline writes a clearly named artifact bundle in the output dir:
-  - [ ] `sim_std_res.tsv` (final response matrix used for downstream inference)
-  - [ ] a small JSON note of the pipeline (`normalization_mode`, `transform_mode`, `standardize_mode`, `pmd_mode`)
+- [x] Implement `standardize_mode` variants (via `response_mode`; no separate knob needed):
+  - [x] `none` (use `response_mode=log_counts`)
+  - [x] `per_guide_zscore` (use `response_mode=guide_zscore_log_counts`; note: for per-guide OLS with an intercept this does **not** change t/p, so treat as LMM-only sensitivity / numerical-stability experiment)
+- [x] Keep PMD standardized residuals as an additional (not exclusive) response construction:
+  - [x] `response_mode=pmd_std_res` runs PMD on the count matrix (treat as a normalization layer)
+  - [x] record `pmd_n_boot` and `pmd_seed` in `benchmark_report.json` for reproducibility
+- [x] Ensure each response pipeline writes a clearly named artifact bundle in the output dir:
+  - [x] `sim_std_res.tsv` (final response matrix used for downstream inference)
+  - [x] a small JSON note of the pipeline (via `benchmark_report.json` → `config`)
 
 #### P4.4 — Method Matrix (explicit; no conflation)
 Goal: evaluate methods × response constructions × depth handling without mixing outputs.
