@@ -389,3 +389,5 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
 - [x] Standardize output directory naming to encode the benchmark pipeline (response + normalization + depth mode) without ambiguity.
 - [x] Ensure every figure can be regenerated from the written TSV/JSON artifacts (scripts remain consumer-only; no hidden recomputation).
   - [x] Convenience runner: `scripts/run_count_depth_benchmark_suite.py` (grid → aggregate → figures).
+  - [x] Suite manifest captures invocation, git, environment, and exact sub-commands (`suite_manifest.json`).
+  - [x] Friction reducers: `--preset {quick,standard,full}` and `--resume` (reuse existing grid TSV; avoid mixing outputs by accident).
