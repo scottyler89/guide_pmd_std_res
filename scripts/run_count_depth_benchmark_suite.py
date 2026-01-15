@@ -44,8 +44,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--grid-args",
-        nargs=argparse.REMAINDER,
-        help="Extra args passed to scripts/run_count_depth_grid.py (excluding --out-dir).",
+        nargs="*",
+        help=(
+            "Extra args passed to scripts/run_count_depth_grid.py (excluding --out-dir). "
+            "Suite flags (e.g. --heatmaps) will not be forwarded."
+        ),
     )
     parser.add_argument(
         "--heatmaps",
