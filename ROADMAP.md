@@ -350,7 +350,7 @@ Goal: quantify correctness along multiple axes, not just FDR.
   - [ ] p-histograms (plots optional)
 - [ ] Detection (signal):
   - [x] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
-  - [ ] power curves vs effect size (`effect_sd`) at fixed FDR q
+  - [x] power curves vs effect size (`effect_sd`) at fixed FDR q (via `scripts/plot_count_depth_grid_summary.py`)
 - [ ] Estimation quality:
   - [x] correlation and RMSE of `theta_hat` vs `theta_true` (meta/LMM)
   - [x] sign accuracy vs `theta_true` (signal genes)
@@ -373,12 +373,12 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
   - [x] include an additional “signal-only estimation” scorecard for theta metrics (meta/LMM only)
 - [ ] Grid heatmaps (faceted by method/response):
-  - [ ] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier`
-  - [ ] FDR at q vs same axes
-- [ ] Power vs realism knobs:
-  - [ ] TPR at q vs `effect_sd` (one curve per method/response/depth-handling)
-- [ ] Pareto front plots:
-  - [ ] runtime vs TPR at q (color by achieved FDR; flag invalid/failed fits)
+  - [x] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier` (via `scripts/plot_count_depth_grid_heatmaps.py`)
+  - [x] FDR at q vs same axes (via `scripts/plot_count_depth_grid_heatmaps.py`)
+- [x] Power vs realism knobs:
+  - [x] TPR at q vs `effect_sd` (one curve per method/response/depth-handling; via `scripts/plot_count_depth_grid_summary.py`)
+- [x] Pareto front plots:
+  - [x] runtime vs TPR at q (color by achieved FDR; via `scripts/plot_count_depth_scorecards.py`)
 - [ ] Agreement/disagreement plots on the *same simulated truth*:
   - [ ] method-vs-method scatter of `-log10(p)` (never mixing LRT/Wald)
   - [ ] confusion matrices at q for method pairs
