@@ -219,6 +219,46 @@ def _method_grid_avg_rank(
     return pd.DataFrame(out_rows)
 
 
+def _plot_pareto_runtime_vs_tpr(
+    df: pd.DataFrame,
+    *,
+    out_path: str,
+    title: str,
+    fdr_q: float,
+) -> None:
+    plt = _require_matplotlib()
+
+    sub = df.copy()
+    sub["runtime_sec"] = pd.to_numeric(sub["runtime_sec"], errors="coerce")
+    sub["q_tpr"] = pd.to_numeric(sub["q_tpr"], errors="coerce")
+    sub["q_fdr"] = pd.to_numeric(sub["q_fdr"], errors="coerce")
+    sub = sub.loc[sub["runtime_sec"].notna() & sub["q_tpr"].notna() & sub["q_fdr"].notna()].copy()
+    if sub.empty:
+        return
+
+    sub["q_fdr_excess"] = np.maximum(0.0, sub["q_fdr"] - float(fdr_q))
+
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+    sc = ax.scatter(
+        sub["runtime_sec"],
+        sub["q_tpr"],
+        c=sub["q_fdr_excess"],
+        cmap="viridis_r",
+        s=80,
+        edgecolors="none",
+    )
+    ax.set_xlabel("Runtime (sec)")
+    ax.set_ylabel("TPR at FDR q")
+    ax.set_title(title)
+    ax.set_xscale("log")
+    ax.grid(True, lw=0.5, alpha=0.3)
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.85, pad=0.02)
+    cbar.set_label("FDR excess over q (lower is better)")
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def _pipeline_label(row: pd.Series, *, method: str) -> str:
     rm = str(row.get("response_mode", ""))
     norm = str(row.get("normalization_mode", ""))
@@ -386,6 +426,14 @@ def main() -> None:
         if int(args.max_pipelines) > 0:
             sig_ranked = sig_ranked.head(int(args.max_pipelines))
         _write_tsv(os.path.join(args.out_dir, "scorecard_signal.tsv"), sig_ranked)
+        keep = sig_ranked["pipeline"].astype(str).tolist() if (not sig_ranked.empty) else []
+        sig_for_pareto = sig_agg.loc[sig_agg["pipeline"].astype(str).isin(keep)].copy() if keep else sig_agg
+        _plot_pareto_runtime_vs_tpr(
+            sig_for_pareto,
+            out_path=os.path.join(args.out_dir, "pareto_runtime_vs_tpr.png"),
+            title="Pareto: runtime vs power (signal runs)",
+            fdr_q=float(fdr_q),
+        )
         plots_made += 1
 
     # Estimation scorecard: only pipelines with theta metrics.
