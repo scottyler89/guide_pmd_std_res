@@ -35,6 +35,7 @@ def test_benchmark_count_depth_report_has_qc_and_metrics(tmp_path):
 
     assert "counts_qc" in report
     assert "mean_dispersion" in report["counts_qc"]
+    assert "mean_dispersion_gene" in report["counts_qc"]
     assert "depth_proxy" in report["counts_qc"]
 
     assert "design_matrix" in report
@@ -45,6 +46,7 @@ def test_benchmark_count_depth_report_has_qc_and_metrics(tmp_path):
     md_path = report["outputs"]["counts_mean_dispersion_tsv"]
     assert md_path
     assert (out_dir / "sim_counts_mean_dispersion.tsv").exists()
+    assert (out_dir / "sim_counts_gene_mean_dispersion.tsv").exists()
 
     assert "meta" in report
     assert "ks_uniform_null" in report["meta"]

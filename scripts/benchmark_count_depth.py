@@ -208,6 +208,55 @@ def _write_mean_dispersion_tables(
     return out_path, qc
 
 
+def _write_gene_mean_dispersion_tables(
+    counts_df: pd.DataFrame,
+    annotation_df: pd.DataFrame,
+    *,
+    out_dir: str,
+) -> tuple[str, dict[str, float | None]]:
+    """
+    Write per-gene mean/variance/dispersion summaries from simulated counts.
+
+    Aggregation: sum counts across guides within gene per sample, then compute
+    mean/variance across samples.
+    """
+    gene = annotation_df.iloc[:, 0].astype(str).reindex(counts_df.index)
+    gene_counts = counts_df.copy()
+    gene_counts.insert(0, "_gene_id", gene.to_numpy(dtype=str))
+    gene_counts = gene_counts.groupby("_gene_id", sort=True).sum(numeric_only=True)
+
+    x = gene_counts.to_numpy(dtype=float)
+    mean = np.mean(x, axis=1)
+    var = np.var(x, axis=1, ddof=1) if x.shape[1] > 1 else np.zeros_like(mean)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        phi_hat = (var - mean) / np.maximum(mean, np.finfo(float).tiny) ** 2
+    phi_hat = np.where(np.isfinite(phi_hat) & (phi_hat > 0.0), phi_hat, 0.0)
+
+    out_path = os.path.join(out_dir, "sim_counts_gene_mean_dispersion.tsv")
+    df = pd.DataFrame(
+        {
+            "gene_id": gene_counts.index.astype(str).to_numpy(),
+            "n_guides": annotation_df.iloc[:, 0].astype(str).value_counts().reindex(gene_counts.index).fillna(0).astype(int).to_numpy(),
+            "mean": mean.astype(float),
+            "var": var.astype(float),
+            "phi_hat": phi_hat.astype(float),
+        }
+    )
+    df.to_csv(out_path, sep="\t", index=False)
+
+    mv_mask = np.isfinite(mean) & np.isfinite(var) & (mean > 0) & (var > 0)
+    corr = None
+    if int(np.sum(mv_mask)) > 2:
+        corr = float(np.corrcoef(np.log(mean[mv_mask]), np.log(var[mv_mask]))[0, 1])
+    qc = {
+        "n_genes": float(df.shape[0]),
+        "median_mean": float(np.nanmedian(mean)),
+        "median_phi_hat": float(np.nanmedian(phi_hat)),
+        "corr_log_mean_log_var": corr,
+    }
+    return out_path, qc
+
+
 @dataclass(frozen=True)
 class CountDepthBenchmarkConfig:
     n_genes: int
@@ -823,6 +872,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
 
     mean_disp_path, mean_disp_qc = _write_mean_dispersion_tables(counts_df, ann_df, out_dir=out_dir)
+    mean_disp_gene_path, mean_disp_gene_qc = _write_gene_mean_dispersion_tables(counts_df, ann_df, out_dir=out_dir)
     depth_qc = {
         "n_samples": float(truth_sample.shape[0]),
         "log_libsize_mean": float(truth_sample["log_libsize"].mean()),
@@ -834,6 +884,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     }
     counts_qc = {
         "mean_dispersion": mean_disp_qc,
+        "mean_dispersion_gene": mean_disp_gene_qc,
         "depth_proxy": depth_qc,
     }
 
@@ -988,6 +1039,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         "outputs": {
             "counts_tsv": counts_path,
             "counts_mean_dispersion_tsv": mean_disp_path,
+            "counts_gene_mean_dispersion_tsv": mean_disp_gene_path,
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
             "truth_sample_tsv": truth_sample_path,
