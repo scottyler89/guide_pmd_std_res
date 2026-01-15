@@ -21,6 +21,166 @@ from guide_pmd.gene_level_qc import compute_gene_qc
 from guide_pmd.gene_level_stouffer import compute_gene_stouffer
 
 
+def _ks_uniform(p: pd.Series) -> dict[str, float | None]:
+    from scipy.stats import kstest
+
+    p_arr = p.to_numpy(dtype=float)
+    mask = np.isfinite(p_arr) & (p_arr >= 0.0) & (p_arr <= 1.0)
+    p_arr = p_arr[mask]
+    if p_arr.size == 0:
+        return {"n": 0.0, "ks": None, "ks_p": None}
+    res = kstest(p_arr, "uniform")
+    return {"n": float(p_arr.size), "ks": float(res.statistic), "ks_p": float(res.pvalue)}
+
+
+def _roc_auc(y_true: np.ndarray, score: np.ndarray) -> float | None:
+    from scipy.stats import rankdata
+
+    y = np.asarray(y_true, dtype=bool)
+    s = np.asarray(score, dtype=float)
+    mask = np.isfinite(s)
+    y = y[mask]
+    s = s[mask]
+    n_pos = int(np.sum(y))
+    n_neg = int(y.size - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        return None
+    ranks = rankdata(s, method="average")  # increasing
+    sum_ranks_pos = float(np.sum(ranks[y]))
+    auc = (sum_ranks_pos - (n_pos * (n_pos + 1) / 2.0)) / float(n_pos * n_neg)
+    return float(auc)
+
+
+def _average_precision(y_true: np.ndarray, score: np.ndarray) -> float | None:
+    y = np.asarray(y_true, dtype=bool)
+    s = np.asarray(score, dtype=float)
+    mask = np.isfinite(s)
+    y = y[mask]
+    s = s[mask]
+    n_pos = int(np.sum(y))
+    if n_pos == 0:
+        return None
+    order = np.argsort(-s, kind="mergesort")
+    y_sorted = y[order]
+    tp = np.cumsum(y_sorted, dtype=float)
+    precision = tp / (np.arange(y_sorted.size, dtype=float) + 1.0)
+    ap = float(np.sum(precision[y_sorted]) / float(n_pos))
+    return ap
+
+
+def _score_from_p(p: pd.Series) -> np.ndarray:
+    p_arr = p.to_numpy(dtype=float)
+    p_arr = np.clip(p_arr, 1e-300, 1.0)
+    return -np.log10(p_arr)
+
+
+def _score_from_p_impute_nan_as_1(p: pd.Series) -> np.ndarray:
+    p_arr = p.to_numpy(dtype=float)
+    p_arr = np.where(np.isfinite(p_arr), p_arr, 1.0)
+    p_arr = np.clip(p_arr, 1e-300, 1.0)
+    return -np.log10(p_arr)
+
+
+def _safe_corr(x: np.ndarray, y: np.ndarray) -> float | None:
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+    x_arr = x_arr[mask]
+    y_arr = y_arr[mask]
+    if x_arr.size < 2:
+        return None
+    if float(np.std(x_arr)) <= 0.0 or float(np.std(y_arr)) <= 0.0:
+        return None
+    return float(np.corrcoef(x_arr, y_arr)[0, 1])
+
+
+def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float | None:
+    yt = np.asarray(y_true, dtype=float)
+    yp = np.asarray(y_pred, dtype=float)
+    mask = np.isfinite(yt) & np.isfinite(yp)
+    yt = yt[mask]
+    yp = yp[mask]
+    if yt.size == 0:
+        return None
+    return float(np.sqrt(np.mean((yp - yt) ** 2)))
+
+
+def _theta_metrics(joined: pd.DataFrame, *, theta_col: str) -> dict[str, float | None]:
+    theta_true = pd.to_numeric(joined["theta_true"], errors="coerce").to_numpy(dtype=float)
+    theta_hat = pd.to_numeric(joined[theta_col], errors="coerce").to_numpy(dtype=float)
+    is_signal = joined["is_signal"].to_numpy(dtype=bool)
+
+    corr_all = _safe_corr(theta_true, theta_hat)
+    rmse_all = _rmse(theta_true, theta_hat)
+
+    corr_signal = _safe_corr(theta_true[is_signal], theta_hat[is_signal])
+    rmse_signal = _rmse(theta_true[is_signal], theta_hat[is_signal])
+
+    mask_sig = is_signal & np.isfinite(theta_true) & np.isfinite(theta_hat) & (theta_true != 0.0)
+    sign_acc_signal = None
+    if int(np.sum(mask_sig)) > 0:
+        sign_acc_signal = float(np.mean(np.sign(theta_true[mask_sig]) == np.sign(theta_hat[mask_sig])))
+
+    return {
+        "n_all": float(int(np.sum(np.isfinite(theta_true) & np.isfinite(theta_hat)))),
+        "corr_all": corr_all,
+        "rmse_all": rmse_all,
+        "n_signal": float(int(np.sum(np.isfinite(theta_true[is_signal]) & np.isfinite(theta_hat[is_signal])))),
+        "corr_signal": corr_signal,
+        "rmse_signal": rmse_signal,
+        "sign_acc_signal": sign_acc_signal,
+    }
+
+
+def _write_mean_dispersion_tables(
+    counts_df: pd.DataFrame,
+    annotation_df: pd.DataFrame,
+    *,
+    out_dir: str,
+) -> tuple[str, dict[str, float | None]]:
+    """
+    Write per-guide mean/variance/dispersion summaries for simulated counts.
+
+    Dispersion is a simple method-of-moments estimate:
+        phi_hat = max(0, (var - mean) / mean^2)
+
+    For NB counts (Var = mu + phi * mu^2), phi_hat targets phi in expectation.
+    """
+    guides = counts_df.index.astype(str).to_numpy()
+    gene = annotation_df.iloc[:, 0].astype(str).reindex(counts_df.index).to_numpy()
+    x = counts_df.to_numpy(dtype=float)
+    mean = np.mean(x, axis=1)
+    var = np.var(x, axis=1, ddof=1) if x.shape[1] > 1 else np.zeros_like(mean)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        phi_hat = (var - mean) / np.maximum(mean, np.finfo(float).tiny) ** 2
+    phi_hat = np.where(np.isfinite(phi_hat) & (phi_hat > 0.0), phi_hat, 0.0)
+
+    out_path = os.path.join(out_dir, "sim_counts_mean_dispersion.tsv")
+    df = pd.DataFrame(
+        {
+            "guide_id": guides,
+            "gene_id": gene,
+            "mean": mean.astype(float),
+            "var": var.astype(float),
+            "phi_hat": phi_hat.astype(float),
+        }
+    )
+    df.to_csv(out_path, sep="\t", index=False)
+
+    # Aggregate summaries for the report.
+    mv_mask = np.isfinite(mean) & np.isfinite(var) & (mean > 0) & (var > 0)
+    corr = None
+    if int(np.sum(mv_mask)) > 2:
+        corr = float(np.corrcoef(np.log(mean[mv_mask]), np.log(var[mv_mask]))[0, 1])
+    qc = {
+        "n_guides": float(df.shape[0]),
+        "median_mean": float(np.nanmedian(mean)),
+        "median_phi_hat": float(np.nanmedian(phi_hat)),
+        "corr_log_mean_log_var": corr,
+    }
+    return out_path, qc
+
+
 @dataclass(frozen=True)
 class CountDepthBenchmarkConfig:
     n_genes: int
@@ -598,6 +758,8 @@ def _qq_stats(p: pd.Series) -> dict[str, float | int | None]:
 
 
 def _json_sanitize(obj: object) -> object:
+    if isinstance(obj, np.generic):
+        return _json_sanitize(obj.item())
     if isinstance(obj, dict):
         return {str(k): _json_sanitize(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -632,6 +794,47 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     truth_sample.to_csv(truth_sample_path, sep="\t", index=False)
     truth_gene.to_csv(truth_path, sep="\t", index=False)
     truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
+
+    mean_disp_path, mean_disp_qc = _write_mean_dispersion_tables(counts_df, ann_df, out_dir=out_dir)
+    depth_qc = {
+        "n_samples": float(truth_sample.shape[0]),
+        "log_libsize_mean": float(truth_sample["log_libsize"].mean()),
+        "log_libsize_sd": float(truth_sample["log_libsize"].std(ddof=1)) if truth_sample.shape[0] > 1 else 0.0,
+        "corr_treatment_log_libsize": _safe_corr(
+            truth_sample["treatment"].to_numpy(dtype=float),
+            truth_sample["log_libsize"].to_numpy(dtype=float),
+        ),
+    }
+    counts_qc = {
+        "mean_dispersion": mean_disp_qc,
+        "depth_proxy": depth_qc,
+    }
+
+    mm_sanity = mm.copy()
+    if "Intercept" not in mm_sanity.columns:
+        mm_sanity.insert(0, "Intercept", 1.0)
+    x = mm_sanity.to_numpy(dtype=float)
+    rank = int(np.linalg.matrix_rank(x)) if x.size else 0
+    cond = float(np.linalg.cond(x)) if x.size else None
+    cols = [str(c) for c in mm_sanity.columns]
+    corr_m = mm_sanity.corr().to_numpy(dtype=float)
+    corr: dict[str, dict[str, float | None]] = {}
+    for i, c1 in enumerate(cols):
+        corr[c1] = {}
+        for j, c2 in enumerate(cols):
+            v = float(corr_m[i, j])
+            corr[c1][c2] = v if np.isfinite(v) else None
+    design_matrix = {
+        "n_rows": float(mm_sanity.shape[0]),
+        "n_cols": float(mm_sanity.shape[1]),
+        "rank": float(rank),
+        "cond": cond,
+        "corr": corr,
+    }
+
+    truth_guide = truth_guide.copy()
+    truth_guide["theta_dev"] = truth_guide["theta_guide"] - truth_guide["theta_gene"]
+    true_het = truth_guide.groupby("gene_id")["theta_dev"].std(ddof=1).fillna(0.0).rename("theta_dev_sd").astype(float)
 
     focal_vars = ["treatment"]
 
@@ -756,6 +959,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         "config": asdict(cfg),
         "outputs": {
             "counts_tsv": counts_path,
+            "counts_mean_dispersion_tsv": mean_disp_path,
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
             "truth_sample_tsv": truth_sample_path,
@@ -767,6 +971,8 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "gene_lmm_selection_tsv": lmm_sel_out_path if lmm_selection is not None else "",
             "gene_qc_tsv": qc_out_path if "qc" in cfg.methods else "",
         },
+        "counts_qc": counts_qc,
+        "design_matrix": design_matrix,
         "runtime_sec": runtime,
     }
 
@@ -776,6 +982,10 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         report["meta"] = {
             "null": _summarize_p(meta_null, alpha=cfg.alpha),
             "signal": _summarize_p(meta_sig, alpha=cfg.alpha),
+            "ks_uniform_null": _ks_uniform(meta_null),
+            "roc_auc": _roc_auc(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
+            "average_precision": _average_precision(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
+            "theta_metrics": _theta_metrics(meta_join, theta_col="theta") if "theta" in meta_join.columns else {},
             "fdr": _fdr_summary(meta_join["p_adj"], meta_join["is_signal"], q=cfg.fdr_q),
             "confusion_alpha": _confusion(meta_called_alpha, meta_join["is_signal"].to_numpy(dtype=bool)),
             "confusion_fdr_q": _confusion(meta_called_q, meta_join["is_signal"].to_numpy(dtype=bool)),
@@ -790,6 +1000,9 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         report["stouffer"] = {
             "null": _summarize_p(stouffer_null, alpha=cfg.alpha),
             "signal": _summarize_p(stouffer_sig, alpha=cfg.alpha),
+            "ks_uniform_null": _ks_uniform(stouffer_null),
+            "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(stouffer_join["p"])),
+            "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(stouffer_join["p"])),
             "fdr": _fdr_summary(stouffer_join["p_adj"], stouffer_join["is_signal"], q=cfg.fdr_q),
             "confusion_alpha": _confusion(st_called_alpha, is_signal_arr),
             "confusion_fdr_q": _confusion(st_called_q, is_signal_arr),
@@ -811,6 +1024,10 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         report["lmm_lrt"] = {
             "null": _summarize_p(lrt_null, alpha=cfg.alpha),
             "signal": _summarize_p(lrt_sig, alpha=cfg.alpha),
+            "ks_uniform_null": _ks_uniform(lrt_null),
+            "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
+            "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
+            "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
             "fdr": _fdr_summary(lmm_join["lrt_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "lrt_p_adj" in lmm_join.columns else {},
             "lrt_ok_frac": float(np.mean(lmm_join["lrt_ok"].fillna(False).astype(bool))) if "lrt_ok" in lmm_join.columns else np.nan,
             "confusion_alpha": _confusion(lrt_called_alpha, is_signal_arr),
@@ -819,11 +1036,34 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         report["lmm_wald"] = {
             "null": _summarize_p(wald_null, alpha=cfg.alpha),
             "signal": _summarize_p(wald_sig, alpha=cfg.alpha),
+            "ks_uniform_null": _ks_uniform(wald_null),
+            "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
+            "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
+            "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
             "fdr": _fdr_summary(lmm_join["wald_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "wald_p_adj" in lmm_join.columns else {},
             "wald_ok_frac": float(np.mean(lmm_join["wald_ok"].fillna(False).astype(bool))) if "wald_ok" in lmm_join.columns else np.nan,
             "confusion_alpha": _confusion(wald_called_alpha, is_signal_arr),
             "confusion_fdr_q": _confusion(wald_called_q, is_signal_arr),
         }
+
+    heterogeneity: dict[str, object] = {
+        "theta_dev_sd_median": float(np.nanmedian(true_het.to_numpy(dtype=float))) if not true_het.empty else None,
+        "theta_dev_sd_mean": float(np.nanmean(true_het.to_numpy(dtype=float))) if not true_het.empty else None,
+        "theta_dev_sd_tsv_note": "Use sim_truth_guide.tsv to recompute alternative heterogeneity summaries per gene.",
+    }
+    if ("meta" in cfg.methods) and (not meta_df.empty) and ("tau" in meta_join.columns):
+        tau_hat = pd.to_numeric(meta_join["tau"], errors="coerce").to_numpy(dtype=float)
+        tau_true = meta_join["gene_id"].astype(str).map(true_het).to_numpy(dtype=float)
+        mask = np.isfinite(tau_hat) & np.isfinite(tau_true)
+        heterogeneity["meta_tau_corr_true"] = _safe_corr(tau_true[mask], tau_hat[mask])
+        heterogeneity["meta_tau_n"] = float(int(np.sum(mask)))
+    if ("lmm" in cfg.methods) and (not lmm_df.empty) and ("tau" in lmm_join.columns):
+        tau_hat = pd.to_numeric(lmm_join["tau"], errors="coerce").to_numpy(dtype=float)
+        tau_true = lmm_join["gene_id"].astype(str).map(true_het).to_numpy(dtype=float)
+        mask = np.isfinite(tau_hat) & np.isfinite(tau_true)
+        heterogeneity["lmm_tau_corr_true"] = _safe_corr(tau_true[mask], tau_hat[mask])
+        heterogeneity["lmm_tau_n"] = float(int(np.sum(mask)))
+    report["heterogeneity"] = heterogeneity
     qq: dict[str, object] = {}
     wrote_any_plot = False
     fig_dir = os.path.join(out_dir, "figures")
