@@ -54,6 +54,9 @@ class CountDepthBenchmarkConfig:
     # Construct a PMD-like response from simulated counts.
     pseudocount: float
     response_mode: str
+    normalization_mode: str
+    logratio_mode: str
+    n_reference_genes: int
     pmd_n_boot: int
     pmd_seed: int
     # Count distribution / overdispersion (Var = mu + nb_overdispersion * mu^2; 0 => Poisson).
@@ -112,6 +115,19 @@ class CountDepthBenchmarkConfig:
             raise ValueError("pseudocount must be > 0")
         if self.response_mode not in {"log_counts", "guide_zscore_log_counts", "pmd_std_res"}:
             raise ValueError("response_mode must be one of: log_counts, guide_zscore_log_counts, pmd_std_res")
+        if str(self.normalization_mode) not in {"none", "libsize_to_mean", "cpm", "median_ratio"}:
+            raise ValueError("normalization_mode must be one of: none, libsize_to_mean, cpm, median_ratio")
+        if str(self.logratio_mode) not in {"none", "clr_all", "alr_refset"}:
+            raise ValueError("logratio_mode must be one of: none, clr_all, alr_refset")
+        if int(self.n_reference_genes) < 0:
+            raise ValueError("n_reference_genes must be >= 0")
+        if str(self.logratio_mode) == "alr_refset" and int(self.n_reference_genes) < 1:
+            raise ValueError("n_reference_genes must be >= 1 for logratio_mode=alr_refset")
+        if self.response_mode == "pmd_std_res":
+            if str(self.normalization_mode) != "none":
+                raise ValueError("normalization_mode must be 'none' for response_mode=pmd_std_res")
+            if str(self.logratio_mode) != "none":
+                raise ValueError("logratio_mode must be 'none' for response_mode=pmd_std_res")
         if self.response_mode == "pmd_std_res":
             if int(self.pmd_n_boot) < 2:
                 raise ValueError("pmd_n_boot must be >= 2 (required for valid PMD z-scores)")
@@ -218,6 +234,58 @@ def _draw_counts(rng: np.random.Generator, mu: np.ndarray, *, nb_overdispersion:
     return rng.poisson(mu * gamma).astype(int)
 
 
+def _normalize_counts(counts_df: pd.DataFrame, *, mode: str) -> np.ndarray:
+    mode = str(mode)
+    counts = counts_df.to_numpy(dtype=float)
+    if mode == "none":
+        return counts
+
+    libsize = np.sum(counts, axis=0).astype(float)
+    libsize = np.clip(libsize, 1.0, None)
+
+    if mode == "libsize_to_mean":
+        mean_libsize = float(np.mean(libsize))
+        return counts * (mean_libsize / libsize)[None, :]
+    if mode == "cpm":
+        return (counts / libsize[None, :]) * 1e6
+    if mode == "median_ratio":
+        positive_rows = (counts > 0).all(axis=1)
+        if not np.any(positive_rows):
+            raise ValueError("median_ratio normalization requires at least one guide with all-positive counts")
+        gmean = np.exp(np.mean(np.log(counts[positive_rows, :]), axis=1)).astype(float)  # (n_guides_pos,)
+        ratios = counts[positive_rows, :] / gmean[:, None]
+        size_factors = np.median(ratios, axis=0).astype(float)
+        size_factors = np.clip(size_factors, np.finfo(float).tiny, None)
+        return counts / size_factors[None, :]
+
+    raise ValueError(f"unknown normalization_mode: {mode}")
+
+
+def _apply_logratio(
+    log_values: np.ndarray,
+    *,
+    mode: str,
+    ref_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    mode = str(mode)
+    log_values = np.asarray(log_values, dtype=float)
+    if mode == "none":
+        return log_values
+    if mode == "clr_all":
+        return log_values - np.mean(log_values, axis=0, keepdims=True)
+    if mode == "alr_refset":
+        if ref_mask is None:
+            raise ValueError("ref_mask is required for logratio_mode=alr_refset")
+        ref_mask = np.asarray(ref_mask, dtype=bool)
+        if ref_mask.ndim != 1 or ref_mask.shape[0] != log_values.shape[0]:
+            raise ValueError("ref_mask must be 1D with length n_guides")
+        if not np.any(ref_mask):
+            raise ValueError("logratio_mode=alr_refset requires a non-empty reference guide set")
+        ref_mean = np.mean(log_values[ref_mask, :], axis=0, keepdims=True)
+        return log_values - ref_mean
+    raise ValueError(f"unknown logratio_mode: {mode}")
+
+
 def _compute_pmd_std_res(counts_df: pd.DataFrame, *, n_boot: int, seed: int) -> pd.DataFrame:
     from percent_max_diff.percent_max_diff import pmd
 
@@ -307,20 +375,26 @@ def simulate_counts_and_std_res(
     # Keep the oracle depth_factor for truth/auditing only.
     log_depth = np.log(depth_factor)
 
-    gene_ids = [f"gene_{i:05d}" for i in range(int(cfg.n_genes))]
-    is_signal = rng.random(int(cfg.n_genes)) < float(cfg.frac_signal)
-    gene_theta = rng.normal(loc=0.0, scale=float(cfg.effect_sd), size=int(cfg.n_genes)).astype(float)
-    gene_theta = np.where(is_signal, gene_theta, 0.0)
+    n_target_genes = int(cfg.n_genes)
+    n_ref_genes = int(cfg.n_reference_genes)
+    gene_ids = [f"ref_{i:05d}" for i in range(n_ref_genes)] + [f"gene_{i:05d}" for i in range(n_target_genes)]
+    is_reference = np.array([True] * n_ref_genes + [False] * n_target_genes, dtype=bool)
+    is_signal_target = rng.random(n_target_genes) < float(cfg.frac_signal)
+    gene_theta_target = rng.normal(loc=0.0, scale=float(cfg.effect_sd), size=n_target_genes).astype(float)
+    gene_theta_target = np.where(is_signal_target, gene_theta_target, 0.0)
+    gene_theta = np.concatenate([np.zeros(n_ref_genes, dtype=float), gene_theta_target]).astype(float)
+    is_signal = np.concatenate([np.zeros(n_ref_genes, dtype=bool), is_signal_target]).astype(bool)
 
     gene_log_lambda = rng.normal(
         loc=float(cfg.guide_lambda_log_mean),
         scale=float(cfg.gene_lambda_log_sd),
-        size=int(cfg.n_genes),
+        size=int(n_ref_genes + n_target_genes),
     ).astype(float)
 
     truth_gene = pd.DataFrame(
         {
             "gene_id": gene_ids,
+            "is_reference": is_reference.astype(bool),
             "is_signal": is_signal.astype(bool),
             "theta_true": gene_theta.astype(float),
             "log_lambda_gene": gene_log_lambda.astype(float),
@@ -337,7 +411,7 @@ def simulate_counts_and_std_res(
     log_lambda_guide_rows: list[float] = []
 
     for gene_i, (gene_id, theta) in enumerate(zip(gene_ids, gene_theta)):
-        gene_is_signal = bool(is_signal[gene_i])
+        gene_is_signal = bool(is_signal[gene_i]) and (not bool(is_reference[gene_i]))
         gene_ll = float(gene_log_lambda[gene_i])
         for j in range(int(cfg.guides_per_gene)):
             guide_id = f"{gene_id}__g{j+1:02d}"
@@ -377,18 +451,22 @@ def simulate_counts_and_std_res(
     log_libsize = np.log(libsize)
     log_libsize_centered = log_libsize - float(np.mean(log_libsize))
 
+    is_ref_guide = np.array([str(g).startswith("ref_") for g in gene_for_guide], dtype=bool)
+
     if cfg.response_mode == "pmd_std_res":
         std_res_df = _compute_pmd_std_res(counts_df, n_boot=int(cfg.pmd_n_boot), seed=int(cfg.pmd_seed))
     else:
-        log_counts = np.log(counts_df.to_numpy(dtype=float) + float(cfg.pseudocount))
+        counts_norm = _normalize_counts(counts_df, mode=str(cfg.normalization_mode))
+        log_vals = np.log(counts_norm + float(cfg.pseudocount))
+        log_vals = _apply_logratio(log_vals, mode=str(cfg.logratio_mode), ref_mask=is_ref_guide)
         if cfg.response_mode == "log_counts":
-            response = log_counts
+            response = log_vals
         else:
-            # Per-guide z-scored log counts (a fast PMD-like surrogate).
-            guide_mean = np.mean(log_counts, axis=1, keepdims=True)
-            guide_sd = np.std(log_counts, axis=1, ddof=1, keepdims=True)
+            # Per-guide z-scored log values (optional; does not change per-guide OLS t/p with an intercept).
+            guide_mean = np.mean(log_vals, axis=1, keepdims=True)
+            guide_sd = np.std(log_vals, axis=1, ddof=1, keepdims=True)
             guide_sd = np.where(guide_sd <= 0, 1.0, guide_sd)
-            response = (log_counts - guide_mean) / guide_sd
+            response = (log_vals - guide_mean) / guide_sd
         std_res_df = pd.DataFrame(response, index=guides, columns=sample_ids)
 
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
@@ -801,7 +879,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
 def main() -> None:
     parser = argparse.ArgumentParser(description="Count-depth benchmark: Poisson counts + depth confounding → gene-level methods.")
     parser.add_argument("--out-dir", required=True, type=str, help="Output directory for benchmark artifacts.")
-    parser.add_argument("--n-genes", type=int, default=500, help="Number of genes.")
+    parser.add_argument("--n-genes", type=int, default=500, help="Number of target genes (excluding reference genes).")
     parser.add_argument("--guides-per-gene", type=int, default=4, help="Guides per gene.")
     parser.add_argument("--n-control", type=int, default=12, help="Number of control samples.")
     parser.add_argument("--n-treatment", type=int, default=12, help="Number of treatment samples.")
@@ -832,11 +910,31 @@ def main() -> None:
     parser.add_argument("--offtarget-slope-sd", type=float, default=0.0, help="SD of off-target slope deviations (default: 0).")
     parser.add_argument("--pseudocount", type=float, default=0.5, help="Pseudocount used in log transform.")
     parser.add_argument(
+        "--n-reference-genes",
+        type=int,
+        default=0,
+        help="Number of always-null reference genes (each with guides_per_gene guides). Required for logratio-mode=alr_refset.",
+    )
+    parser.add_argument(
         "--response-mode",
         type=str,
         choices=["log_counts", "guide_zscore_log_counts", "pmd_std_res"],
         default="log_counts",
         help="How to construct the response matrix from simulated counts (default: log_counts).",
+    )
+    parser.add_argument(
+        "--normalization-mode",
+        type=str,
+        choices=["none", "libsize_to_mean", "cpm", "median_ratio"],
+        default="none",
+        help="Optional count normalization applied before log transform (default: none). Not supported for response-mode=pmd_std_res.",
+    )
+    parser.add_argument(
+        "--logratio-mode",
+        type=str,
+        choices=["none", "clr_all", "alr_refset"],
+        default="none",
+        help="Optional compositional log-ratio transform applied in log-space (default: none). Not supported for response-mode=pmd_std_res.",
     )
     parser.add_argument("--pmd-n-boot", type=int, default=100, help="PMD num_boot (only used for response-mode=pmd_std_res).")
     parser.add_argument(
@@ -937,6 +1035,9 @@ def main() -> None:
         offtarget_slope_sd=args.offtarget_slope_sd,
         pseudocount=args.pseudocount,
         response_mode=str(args.response_mode),
+        normalization_mode=str(args.normalization_mode),
+        logratio_mode=str(args.logratio_mode),
+        n_reference_genes=int(args.n_reference_genes),
         pmd_n_boot=int(args.pmd_n_boot),
         pmd_seed=int(args.seed if args.pmd_seed is None else args.pmd_seed),
         nb_overdispersion=float(args.nb_overdispersion),

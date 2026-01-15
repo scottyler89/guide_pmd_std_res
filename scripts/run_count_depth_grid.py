@@ -102,6 +102,28 @@ def main() -> None:
         default="log_counts",
         help="Response construction mode (default: log_counts).",
     )
+    parser.add_argument(
+        "--normalization-mode",
+        type=str,
+        nargs="+",
+        choices=["none", "libsize_to_mean", "cpm", "median_ratio"],
+        default=["none"],
+        help="Normalization mode(s) to sweep for non-PMD response modes (default: none).",
+    )
+    parser.add_argument(
+        "--logratio-mode",
+        type=str,
+        nargs="+",
+        choices=["none", "clr_all", "alr_refset"],
+        default=["none"],
+        help="Log-ratio mode(s) to sweep for non-PMD response modes (default: none).",
+    )
+    parser.add_argument(
+        "--n-reference-genes",
+        type=int,
+        default=0,
+        help="Number of always-null reference genes (required for logratio-mode=alr_refset).",
+    )
     parser.add_argument("--pmd-n-boot", type=int, default=100, help="PMD num_boot (only used for response-mode=pmd_std_res).")
     parser.add_argument(
         "--qq-plots",
@@ -186,6 +208,8 @@ def main() -> None:
         ot_frac,
         ot_sd,
         nb_overdispersion,
+        normalization_mode,
+        logratio_mode,
     ) in product(
         [int(s) for s in args.seeds],
         [int(n) for n in args.n_genes],
@@ -209,6 +233,8 @@ def main() -> None:
         [float(x) for x in args.offtarget_guide_frac],
         [float(x) for x in args.offtarget_slope_sd],
         [float(x) for x in args.nb_overdispersion],
+        [str(x) for x in args.normalization_mode],
+        [str(x) for x in args.logratio_mode],
     ):
         lmm_max_genes_opt = None if int(lmm_max_genes) == 0 else int(lmm_max_genes)
         cap_tag = 0 if lmm_max_genes_opt is None else int(lmm_max_genes_opt)
@@ -217,6 +243,9 @@ def main() -> None:
             "seed": seed,
             "response_mode": str(args.response_mode),
             "pmd_n_boot": int(args.pmd_n_boot),
+            "normalization_mode": str(normalization_mode),
+            "logratio_mode": str(logratio_mode),
+            "n_reference_genes": int(args.n_reference_genes),
             "n_genes": n_genes,
             "guides_per_gene": int(args.guides_per_gene),
             "n_control": int(args.n_control),
@@ -253,6 +282,8 @@ def main() -> None:
         tag = (
             f"s={seed}"
             f"__rm={args.response_mode}"
+            f"__norm={normalization_mode}"
+            f"__lr={logratio_mode}"
             f"__ng={n_genes}"
             f"__tdm={tdm}"
             f"__fs={frac_signal}"
@@ -306,6 +337,12 @@ def main() -> None:
             str(float(ot_sd)),
             "--response-mode",
             str(args.response_mode),
+            "--normalization-mode",
+            str(normalization_mode),
+            "--logratio-mode",
+            str(logratio_mode),
+            "--n-reference-genes",
+            str(int(args.n_reference_genes)),
             "--pmd-n-boot",
             str(int(args.pmd_n_boot)),
             "--nb-overdispersion",
@@ -343,6 +380,9 @@ def main() -> None:
             "fdr_q": float(report["config"]["fdr_q"]),
             "n_genes": n_genes,
             "guides_per_gene": int(report["config"]["guides_per_gene"]),
+            "normalization_mode": str(report["config"].get("normalization_mode", "")),
+            "logratio_mode": str(report["config"].get("logratio_mode", "")),
+            "n_reference_genes": int(report["config"].get("n_reference_genes", 0)),
             "depth_log_sd": depth_log_sd,
             "n_batches": int(report["config"]["n_batches"]),
             "batch_confounding_strength": float(report["config"]["batch_confounding_strength"]),
@@ -431,6 +471,9 @@ def main() -> None:
     sort_cols = [
         "response_mode",
         "pmd_n_boot",
+        "normalization_mode",
+        "logratio_mode",
+        "n_reference_genes",
         "n_genes",
         "depth_log_sd",
         "n_batches",

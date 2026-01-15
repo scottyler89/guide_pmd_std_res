@@ -10,6 +10,9 @@ import pandas as pd
 CONFIG_COLS = [
     "response_mode",
     "pmd_n_boot",
+    "normalization_mode",
+    "logratio_mode",
+    "n_reference_genes",
     "qq_plots",
     "alpha",
     "fdr_q",
