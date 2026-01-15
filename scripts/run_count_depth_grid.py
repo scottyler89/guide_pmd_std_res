@@ -415,10 +415,46 @@ def main() -> None:
 
         qq = report.get("qq", {})
 
+        counts_qc = report.get("counts_qc", {})
+        mean_disp = counts_qc.get("mean_dispersion", {})
+        depth_proxy = counts_qc.get("depth_proxy", {})
+        row["counts_median_mean"] = mean_disp.get("median_mean")
+        row["counts_median_phi_hat"] = mean_disp.get("median_phi_hat")
+        row["counts_corr_log_mean_log_var"] = mean_disp.get("corr_log_mean_log_var")
+        row["depth_log_libsize_sd"] = depth_proxy.get("log_libsize_sd")
+        row["depth_corr_treatment_log_libsize"] = depth_proxy.get("corr_treatment_log_libsize")
+
+        design = report.get("design_matrix", {})
+        row["design_rank"] = design.get("rank")
+        row["design_cond"] = design.get("cond")
+        design_corr = design.get("corr", {})
+        row["design_corr_treatment_log_libsize_centered"] = design_corr.get("treatment", {}).get("log_libsize_centered")
+
+        het = report.get("heterogeneity", {})
+        row["theta_dev_sd_mean"] = het.get("theta_dev_sd_mean")
+        row["theta_dev_sd_median"] = het.get("theta_dev_sd_median")
+        row["meta_tau_corr_true"] = het.get("meta_tau_corr_true")
+        row["meta_tau_n"] = het.get("meta_tau_n")
+        row["lmm_tau_corr_true"] = het.get("lmm_tau_corr_true")
+        row["lmm_tau_n"] = het.get("lmm_tau_n")
+
         if "meta" in report:
             row["meta_null_mean_p"] = report["meta"]["null"]["mean"]
             row["meta_null_prop_lt_alpha"] = report["meta"]["null"]["prop_lt_alpha"]
             row["meta_null_lambda_gc"] = qq.get("meta_p_null", {}).get("lambda_gc")
+            row["meta_null_ks"] = report["meta"].get("ks_uniform_null", {}).get("ks")
+            row["meta_null_ks_p"] = report["meta"].get("ks_uniform_null", {}).get("ks_p")
+            row["meta_null_ks_n"] = report["meta"].get("ks_uniform_null", {}).get("n")
+            row["meta_roc_auc"] = report["meta"].get("roc_auc")
+            row["meta_average_precision"] = report["meta"].get("average_precision")
+            theta = report["meta"].get("theta_metrics", {})
+            row["meta_theta_corr_all"] = theta.get("corr_all")
+            row["meta_theta_rmse_all"] = theta.get("rmse_all")
+            row["meta_theta_corr_signal"] = theta.get("corr_signal")
+            row["meta_theta_rmse_signal"] = theta.get("rmse_signal")
+            row["meta_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+            row["meta_theta_n_all"] = theta.get("n_all")
+            row["meta_theta_n_signal"] = theta.get("n_signal")
             row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
             row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
             row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
@@ -432,6 +468,11 @@ def main() -> None:
             row["stouffer_null_mean_p"] = report["stouffer"]["null"]["mean"]
             row["stouffer_null_prop_lt_alpha"] = report["stouffer"]["null"]["prop_lt_alpha"]
             row["stouffer_null_lambda_gc"] = qq.get("stouffer_p_null", {}).get("lambda_gc")
+            row["stouffer_null_ks"] = report["stouffer"].get("ks_uniform_null", {}).get("ks")
+            row["stouffer_null_ks_p"] = report["stouffer"].get("ks_uniform_null", {}).get("ks_p")
+            row["stouffer_null_ks_n"] = report["stouffer"].get("ks_uniform_null", {}).get("n")
+            row["stouffer_roc_auc"] = report["stouffer"].get("roc_auc")
+            row["stouffer_average_precision"] = report["stouffer"].get("average_precision")
             row["stouffer_alpha_fp"] = report["stouffer"]["confusion_alpha"]["fp"]
             row["stouffer_alpha_fpr"] = report["stouffer"]["confusion_alpha"]["fpr"]
             row["stouffer_alpha_tpr"] = report["stouffer"]["confusion_alpha"]["tpr"]
@@ -446,6 +487,19 @@ def main() -> None:
             row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
             row["lmm_lrt_ok_frac"] = report["lmm_lrt"]["lrt_ok_frac"]
             row["lmm_lrt_null_lambda_gc"] = qq.get("lmm_lrt_p_null", {}).get("lambda_gc")
+            row["lmm_lrt_null_ks"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks")
+            row["lmm_lrt_null_ks_p"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks_p")
+            row["lmm_lrt_null_ks_n"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("n")
+            row["lmm_lrt_roc_auc"] = report["lmm_lrt"].get("roc_auc")
+            row["lmm_lrt_average_precision"] = report["lmm_lrt"].get("average_precision")
+            theta = report["lmm_lrt"].get("theta_metrics", {})
+            row["lmm_lrt_theta_corr_all"] = theta.get("corr_all")
+            row["lmm_lrt_theta_rmse_all"] = theta.get("rmse_all")
+            row["lmm_lrt_theta_corr_signal"] = theta.get("corr_signal")
+            row["lmm_lrt_theta_rmse_signal"] = theta.get("rmse_signal")
+            row["lmm_lrt_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+            row["lmm_lrt_theta_n_all"] = theta.get("n_all")
+            row["lmm_lrt_theta_n_signal"] = theta.get("n_signal")
             row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
             row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
             row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
@@ -458,6 +512,19 @@ def main() -> None:
             row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
             row["lmm_wald_ok_frac"] = report["lmm_wald"]["wald_ok_frac"]
             row["lmm_wald_null_lambda_gc"] = qq.get("lmm_wald_p_null", {}).get("lambda_gc")
+            row["lmm_wald_null_ks"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks")
+            row["lmm_wald_null_ks_p"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks_p")
+            row["lmm_wald_null_ks_n"] = report["lmm_wald"].get("ks_uniform_null", {}).get("n")
+            row["lmm_wald_roc_auc"] = report["lmm_wald"].get("roc_auc")
+            row["lmm_wald_average_precision"] = report["lmm_wald"].get("average_precision")
+            theta = report["lmm_wald"].get("theta_metrics", {})
+            row["lmm_wald_theta_corr_all"] = theta.get("corr_all")
+            row["lmm_wald_theta_rmse_all"] = theta.get("rmse_all")
+            row["lmm_wald_theta_corr_signal"] = theta.get("corr_signal")
+            row["lmm_wald_theta_rmse_signal"] = theta.get("rmse_signal")
+            row["lmm_wald_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+            row["lmm_wald_theta_n_all"] = theta.get("n_all")
+            row["lmm_wald_theta_n_signal"] = theta.get("n_signal")
             row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
             row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
             row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
