@@ -391,3 +391,5 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] Convenience runner: `scripts/run_count_depth_benchmark_suite.py` (grid → aggregate → figures).
   - [x] Suite manifest captures invocation, git, environment, and exact sub-commands (`suite_manifest.json`).
   - [x] Friction reducers: `--preset {quick,standard,full}` and `--resume` (reuse existing grid TSV; avoid mixing outputs by accident).
+  - [x] Warm-start + parallelism: `scripts/run_count_depth_grid.py --resume --jobs N` (skip completed runs; run multiple configs concurrently).
+  - [x] Suite forwards `--resume` to the grid runner and streams subcommand output (background logs show progress).
