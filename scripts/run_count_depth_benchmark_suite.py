@@ -10,6 +10,8 @@ from datetime import datetime
 from datetime import timezone
 from importlib import metadata
 
+import pandas as pd
+
 
 def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
@@ -135,6 +137,10 @@ def main() -> None:
             "3",
             "--n-genes",
             "500",
+            "--treatment-depth-multiplier",
+            "1.0",
+            "2.0",
+            "10.0",
             "--frac-signal",
             "0.0",
             "0.2",
@@ -178,6 +184,7 @@ def main() -> None:
             "--treatment-depth-multiplier",
             "1.0",
             "2.0",
+            "10.0",
             "--n-batches",
             "1",
             "2",
@@ -265,25 +272,54 @@ def main() -> None:
 
     grid_tsv = args.grid_tsv
     if grid_tsv is None:
-        existing_grid_tsv = os.path.join(grid_out_dir, "count_depth_grid_summary.tsv")
-        if bool(args.resume) and os.path.isfile(existing_grid_tsv):
-            if grid_args:
-                raise ValueError(
-                    "cannot reuse an existing grid TSV while also passing grid args "
-                    "(remove --grid-args/extra grid flags, or use a fresh --out-dir)"
-                )
-            grid_tsv = existing_grid_tsv
-        else:
-            cmd = [sys.executable, _script_path("run_count_depth_grid.py"), "--out-dir", grid_out_dir]
+        # For some presets, run multiple response-mode grids and concatenate.
+        grid_variants: list[dict[str, object]] = []
+        if args.preset == "standard":
+            grid_variants = [
+                {"name": "log_counts", "extra_args": ["--response-mode", "log_counts"]},
+                {"name": "pmd_std_res", "extra_args": ["--response-mode", "pmd_std_res", "--pmd-n-boot", "50"]},
+            ]
+
+        if not grid_variants:
+            grid_variants = [{"name": "grid", "extra_args": []}]
+
+        grid_tsv_paths: list[str] = []
+        for v in grid_variants:
+            name = str(v["name"])
+            variant_out_dir = os.path.join(grid_out_dir, f"rm={name}")
+            os.makedirs(variant_out_dir, exist_ok=True)
+
+            existing = os.path.join(variant_out_dir, "count_depth_grid_summary.tsv")
+            if bool(args.resume) and os.path.isfile(existing):
+                if grid_args:
+                    raise ValueError(
+                        "cannot reuse an existing grid TSV while also passing grid args "
+                        "(remove --grid-args/extra grid flags, or use a fresh --out-dir)"
+                    )
+                grid_tsv_paths.append(existing)
+                continue
+
+            cmd = [sys.executable, _script_path("run_count_depth_grid.py"), "--out-dir", variant_out_dir]
             if bool(args.resume):
                 cmd.append("--resume")
+            cmd.extend([str(x) for x in v.get("extra_args", [])])
             if grid_args:
                 cmd.extend(grid_args)
-            manifest["commands"]["grid"] = cmd
+            manifest["commands"][f"grid_{name}"] = cmd
             _run(cmd)
-            grid_tsv = existing_grid_tsv
-            if not os.path.isfile(grid_tsv):
-                raise RuntimeError(f"grid runner finished but did not write expected TSV: {grid_tsv!r}")
+            if not os.path.isfile(existing):
+                raise RuntimeError(f"grid runner finished but did not write expected TSV: {existing!r}")
+            grid_tsv_paths.append(existing)
+
+        if len(grid_tsv_paths) == 1:
+            grid_tsv = grid_tsv_paths[0]
+        else:
+            combined = os.path.join(out_dir, "count_depth_grid_summary.tsv")
+            dfs = [pd.read_csv(p, sep="\t") for p in grid_tsv_paths]
+            pd.concat(dfs, axis=0, ignore_index=True, sort=False).to_csv(combined, sep="\t", index=False)
+            grid_tsv = combined
+
+        manifest["paths"]["grid_variant_tsvs"] = grid_tsv_paths
     manifest["paths"]["grid_tsv"] = grid_tsv
 
     agg_tsv = os.path.join(out_dir, "count_depth_grid_summary_agg.tsv")
