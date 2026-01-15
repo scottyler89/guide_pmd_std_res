@@ -328,46 +328,50 @@ Goal: benchmark PMD standardized residuals **and** common-sense depth normalizat
 #### P4.4 — Method Matrix (explicit; no conflation)
 Goal: evaluate methods × response constructions × depth handling without mixing outputs.
 
-- [ ] Expand benchmark `methods` to cover the historical p-combine explicitly:
-  - [ ] `stouffer` (combined-t implementation; uses per-guide OLS t)
-- [ ] Keep Plan A results explicitly separated:
-  - [ ] LMM LRT metrics from `lrt_*` columns only
-  - [ ] LMM Wald metrics from `wald_*` columns only
-- [ ] Add a benchmark-side “design matrix sanity” section in the JSON:
-  - [ ] rank / condition number checks per run
-  - [ ] correlations among covariates (esp. treatment vs depth proxies vs batch)
+- [x] Expand benchmark `methods` to cover the historical p-combine explicitly:
+  - [x] `stouffer` (combined-t implementation; uses per-guide OLS t)
+- [x] Keep Plan A results explicitly separated:
+  - [x] LMM LRT metrics from `lrt_*` columns only
+  - [x] LMM Wald metrics from `wald_*` columns only
+- [x] Add a benchmark-side “design matrix sanity” section in the JSON:
+  - [x] rank / condition number checks per run
+  - [x] correlations among covariates (esp. treatment vs depth proxies vs batch)
 
 #### P4.5 — Performance Metrics (beyond calibration)
 Goal: quantify correctness along multiple axes, not just FDR.
 
 - [ ] Count realism / QC (pre-inference):
-  - [ ] mean–variance and mean–dispersion diagnostics (per-guide and per-gene; compare to NB truth when enabled)
-  - [ ] depth-proxy diagnostics: `log_libsize` distribution + correlation with treatment/batch
+  - [x] mean–variance and mean–dispersion diagnostics (per-guide; writes `sim_counts_mean_dispersion.tsv`)
+  - [ ] mean–variance and mean–dispersion diagnostics (per-gene; optional)
+  - [x] depth-proxy diagnostics: `log_libsize` distribution + correlation with treatment/batch
 - [ ] Calibration (null):
-  - [ ] QQ + `lambda_gc` (already)
-  - [ ] p-histograms and KS distance vs Uniform(0,1) (recorded numerically; plots optional)
+  - [x] QQ + `lambda_gc` (recorded numerically by default; optional QQ plot PNGs)
+  - [x] KS distance vs Uniform(0,1) (recorded numerically)
+  - [ ] p-histograms (plots optional)
 - [ ] Detection (signal):
-  - [ ] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
+  - [x] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
   - [ ] power curves vs effect size (`effect_sd`) at fixed FDR q
 - [ ] Estimation quality:
-  - [ ] correlation and RMSE of `theta_hat` vs `theta_true` (per method; effect columns differ by method)
-  - [ ] sign accuracy vs `theta_true`
+  - [x] correlation and RMSE of `theta_hat` vs `theta_true` (meta/LMM)
+  - [x] sign accuracy vs `theta_true` (signal genes)
 - [ ] Robustness/heterogeneity diagnostics:
-  - [ ] relationship between estimated `tau` (meta/LMM) and simulated guide heterogeneity (`guide_slope_sd`, `offtarget_*`)
+  - [x] relationship between estimated `tau` (meta/LMM) and simulated guide heterogeneity (`theta_dev_sd` per gene from `sim_truth_guide.tsv`)
 - [ ] Runtime scaling:
+  - [x] record per-method runtime per run in `benchmark_report.json` and `count_depth_grid_summary.tsv`
   - [ ] runtime vs `n_genes` × `guides_per_gene` × sample size; plus “success/failure fractions” for Plan A.
 
 #### P4.6 — Visualization Suite (for the full grid)
 Goal: a small set of figures that makes tradeoffs obvious to a reader.
 
-- [ ] “Method grid” figure (single page, high-level):
-  - [ ] rows: method pipelines (explicitly separate `lmm_lrt` vs `lmm_wald`; include meta and stouffer; include CLR/ALR variants)
-  - [ ] columns: scenario families (null calibration vs signal; depth confounding; off-target contamination; NB overdispersion)
-  - [ ] cells: compact scorecards (rank or binned performance) so the reader sees winners/losers immediately
-- [ ] Rank scorecard (dot heatmap / circle plot):
-  - [ ] rows: pipelines; columns: key metrics (FDR@q deviation, TPR@q, lambda_gc, AUC, theta RMSE, runtime, failure rate)
-  - [ ] circle size: performance rank within each metric (or absolute value); color: directionality (good/bad) with a single consistent legend
-  - [ ] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
+- [x] “Method grid” figure (single page, high-level):
+  - [x] rows: method pipelines (explicitly separate `lmm_lrt` vs `lmm_wald`; include meta and stouffer; includes CLR/ALR variants when present in the grid)
+  - [x] columns: scenario families (null calibration vs signal; depth confounding; off-target contamination; NB overdispersion)
+  - [x] cells: compact summary via average-rank across family-specific metrics
+- [x] Rank scorecard (dot heatmap / circle plot):
+  - [x] rows: pipelines; columns: key metrics (FDR@q excess, TPR@q, AUC/PR-AUC, lambda_gc deviation, runtime)
+  - [x] circle size: performance rank within each metric; color: best→worst with a single legend
+  - [x] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
+  - [x] include an additional “signal-only estimation” scorecard for theta metrics (meta/LMM only)
 - [ ] Grid heatmaps (faceted by method/response):
   - [ ] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier`
   - [ ] FDR at q vs same axes
