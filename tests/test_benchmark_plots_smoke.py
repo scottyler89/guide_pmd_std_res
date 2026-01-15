@@ -112,3 +112,74 @@ def test_plot_count_depth_scorecards_smoke(tmp_path):
     assert (out_dir / "pareto_runtime_vs_tpr.png").is_file()
     assert (out_dir / "pareto_runtime_vs_tpr.png").stat().st_size > 0
 
+
+def test_plot_count_depth_p_histograms_smoke(tmp_path):
+    pytest.importorskip("matplotlib")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    grid_path = tmp_path / "grid.tsv"
+    out_dir = tmp_path / "out"
+
+    edges = [i / 10.0 for i in range(11)]
+    report1 = tmp_path / "r1.json"
+    report2 = tmp_path / "r2.json"
+    report1.write_text(
+        '{"meta":{"p_hist_null":{"n":10.0,"bin_edges":'
+        + str(edges).replace(" ", "")
+        + ',"counts":[1,1,1,1,1,1,1,1,1,1]}}}',
+        encoding="utf-8",
+    )
+    report2.write_text(
+        '{"meta":{"p_hist_null":{"n":10.0,"bin_edges":'
+        + str(edges).replace(" ", "")
+        + ',"counts":[2,0,1,1,1,1,1,1,1,1]}}}',
+        encoding="utf-8",
+    )
+
+    df = pd.DataFrame(
+        [
+            {
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "none",
+                "include_batch_covariate": False,
+                "frac_signal": 0.0,
+                "depth_log_sd": 1.0,
+                "treatment_depth_multiplier": 2.0,
+                "lmm_scope": "all",
+                "seed": 1,
+                "report_path": str(report1),
+            },
+            {
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "none",
+                "include_batch_covariate": False,
+                "frac_signal": 0.0,
+                "depth_log_sd": 1.0,
+                "treatment_depth_multiplier": 2.0,
+                "lmm_scope": "all",
+                "seed": 2,
+                "report_path": str(report2),
+            },
+        ]
+    )
+    df.to_csv(grid_path, sep="\t", index=False)
+
+    cmd = [
+        sys.executable,
+        "scripts/plot_count_depth_p_histograms.py",
+        "--grid-tsv",
+        str(grid_path),
+        "--out-dir",
+        str(out_dir),
+        "--prefixes",
+        "meta",
+    ]
+    subprocess.run(cmd, check=True, cwd=str(repo_root), capture_output=True, text=True)
+
+    pngs = sorted(out_dir.glob("*.png"))
+    assert pngs
+    assert all(p.stat().st_size > 0 for p in pngs)
