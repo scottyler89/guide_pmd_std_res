@@ -364,6 +364,14 @@ Goal: quantify correctness along multiple axes, not just FDR.
 #### P4.6 — Visualization Suite (for the full grid)
 Goal: a small set of figures that makes tradeoffs obvious to a reader.
 
+- [ ] “Method grid” figure (single page, high-level):
+  - [ ] rows: method pipelines (explicitly separate `lmm_lrt` vs `lmm_wald`; include meta and stouffer; include CLR/ALR variants)
+  - [ ] columns: scenario families (null calibration vs signal; depth confounding; off-target contamination; NB overdispersion)
+  - [ ] cells: compact scorecards (rank or binned performance) so the reader sees winners/losers immediately
+- [ ] Rank scorecard (dot heatmap / circle plot):
+  - [ ] rows: pipelines; columns: key metrics (FDR@q deviation, TPR@q, lambda_gc, AUC, theta RMSE, runtime, failure rate)
+  - [ ] circle size: performance rank within each metric (or absolute value); color: directionality (good/bad) with a single consistent legend
+  - [ ] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
 - [ ] Grid heatmaps (faceted by method/response):
   - [ ] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier`
   - [ ] FDR at q vs same axes
