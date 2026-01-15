@@ -23,6 +23,7 @@ CONFIG_COLS = [
     "n_batches",
     "batch_confounding_strength",
     "batch_depth_log_sd",
+    "depth_covariate_mode",
     "include_depth_covariate",
     "include_batch_covariate",
     "frac_signal",
@@ -116,4 +117,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

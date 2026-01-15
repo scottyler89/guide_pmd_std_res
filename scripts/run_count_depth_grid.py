@@ -230,6 +230,7 @@ def main() -> None:
             "batch_depth_log_sd": float(batch_depth_log_sd),
             "treatment_depth_multiplier": tdm,
             "include_depth_covariate": bool(include_depth),
+            "depth_covariate_mode": "log_libsize" if bool(include_depth) else "none",
             "include_batch_covariate": bool(include_batch),
             "lmm_scope": str(lmm_scope),
             "lmm_q_meta": float(lmm_q_meta),
@@ -289,6 +290,8 @@ def main() -> None:
             str(float(batch_depth_log_sd)),
             "--treatment-depth-multiplier",
             str(tdm),
+            "--depth-covariate-mode",
+            ("log_libsize" if bool(include_depth) else "none"),
             "--seed",
             str(seed),
             "--frac-signal",
@@ -324,8 +327,6 @@ def main() -> None:
         ]
         if lmm_max_genes_opt is not None:
             cmd += ["--lmm-max-genes-per-focal-var", str(int(lmm_max_genes_opt))]
-        if include_depth:
-            cmd.append("--include-depth-covariate")
         cmd.append("--include-batch-covariate" if include_batch else "--no-include-batch-covariate")
         cmd.append("--qq-plots" if bool(args.qq_plots) else "--no-qq-plots")
 
@@ -348,6 +349,7 @@ def main() -> None:
             "batch_depth_log_sd": float(report["config"]["batch_depth_log_sd"]),
             "treatment_depth_multiplier": tdm,
             "include_depth_covariate": include_depth,
+            "depth_covariate_mode": str(report["config"].get("depth_covariate_mode", "")),
             "include_batch_covariate": include_batch,
             "response_mode": report["config"]["response_mode"],
             "guide_lambda_log_mean": float(report["config"]["guide_lambda_log_mean"]),
@@ -435,6 +437,7 @@ def main() -> None:
         "batch_confounding_strength",
         "batch_depth_log_sd",
         "treatment_depth_multiplier",
+        "depth_covariate_mode",
         "include_depth_covariate",
         "include_batch_covariate",
         "lmm_scope",

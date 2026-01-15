@@ -58,7 +58,9 @@ class CountDepthBenchmarkConfig:
     pmd_seed: int
     # Count distribution / overdispersion (Var = mu + nb_overdispersion * mu^2; 0 => Poisson).
     nb_overdispersion: float
-    # Whether to include log-depth as a nuisance covariate in the model matrix.
+    # Depth covariate mode (observed-only; derived from the simulated counts, not oracle depth_factor).
+    depth_covariate_mode: str
+    # Deprecated/compat: whether any depth covariate is included.
     include_depth_covariate: bool
     # Whether to include batch indicators as nuisance covariates in the model matrix.
     include_batch_covariate: bool
@@ -117,6 +119,11 @@ class CountDepthBenchmarkConfig:
                 raise ValueError("pmd_seed must be >= 0")
         if float(self.nb_overdispersion) < 0:
             raise ValueError("nb_overdispersion must be >= 0")
+        if str(self.depth_covariate_mode) not in {"none", "log_libsize"}:
+            raise ValueError("depth_covariate_mode must be one of: none, log_libsize")
+        include_depth_expected = str(self.depth_covariate_mode) != "none"
+        if bool(self.include_depth_covariate) != include_depth_expected:
+            raise ValueError("include_depth_covariate must match depth_covariate_mode (deprecated compat field)")
         if self.min_guides_random_slope < 2:
             raise ValueError("min_guides_random_slope must be >= 2")
         if self.max_iter <= 0:
@@ -385,7 +392,7 @@ def simulate_counts_and_std_res(
         std_res_df = pd.DataFrame(response, index=guides, columns=sample_ids)
 
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
-    if bool(cfg.include_depth_covariate):
+    if str(cfg.depth_covariate_mode) == "log_libsize":
         model_matrix["log_libsize_centered"] = log_libsize_centered
     if bool(cfg.include_batch_covariate) and int(cfg.n_batches) > 1:
         for b in range(1, int(cfg.n_batches)):
@@ -844,6 +851,13 @@ def main() -> None:
         help="Include an observed depth proxy (log_libsize_centered = log(colsum(counts)) centered) in the model matrix as a nuisance covariate.",
     )
     parser.add_argument(
+        "--depth-covariate-mode",
+        type=str,
+        choices=["none", "log_libsize"],
+        default=None,
+        help="Depth covariate mode (observed-only). If provided, overrides `--include-depth-covariate`.",
+    )
+    parser.add_argument(
         "--include-batch-covariate",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -894,6 +908,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.depth_covariate_mode is None:
+        depth_covariate_mode = "log_libsize" if bool(args.include_depth_covariate) else "none"
+    else:
+        depth_covariate_mode = str(args.depth_covariate_mode)
+        if bool(args.include_depth_covariate) and depth_covariate_mode == "none":
+            raise ValueError("Conflicting args: --include-depth-covariate with --depth-covariate-mode=none")
+
     cfg = CountDepthBenchmarkConfig(
         n_genes=args.n_genes,
         guides_per_gene=args.guides_per_gene,
@@ -919,7 +940,8 @@ def main() -> None:
         pmd_n_boot=int(args.pmd_n_boot),
         pmd_seed=int(args.seed if args.pmd_seed is None else args.pmd_seed),
         nb_overdispersion=float(args.nb_overdispersion),
-        include_depth_covariate=bool(args.include_depth_covariate),
+        depth_covariate_mode=str(depth_covariate_mode),
+        include_depth_covariate=bool(depth_covariate_mode != "none"),
         include_batch_covariate=bool(args.include_batch_covariate),
         allow_random_slope=bool(args.allow_random_slope),
         min_guides_random_slope=args.min_guides_random_slope,
