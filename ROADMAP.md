@@ -291,9 +291,9 @@ Phase D — Tie benchmark back to selection policy
 Goal: ensure the benchmark reflects what we can do in real data, where we only have measured library sizes (count depth).
 
 - [x] Remove oracle adjustment from the benchmark: `--include-depth-covariate` uses `log_libsize_centered = log(colsum(counts))` (not simulated `log_depth`).
-- [ ] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
-  - [ ] `none` (no depth adjustment)
-  - [ ] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible; center internally as an implementation detail)
+- [x] Add explicit `depth_covariate_mode` to the benchmark config (no silent behavior):
+  - [x] `none` (no depth adjustment)
+  - [x] `log_libsize` (use `log(colsum(counts))` as a proxy for depth; real-data-compatible; center internally as an implementation detail)
 - [ ] Write the chosen depth covariate values to `sim_truth_sample.tsv` (and record in `benchmark_report.json`) so results are fully auditable.
 - [ ] Add a small check/plot in the benchmark report: `log_libsize` distributions and correlation with treatment/batch (confounding audit).
 
