@@ -6,6 +6,9 @@ import json
 import os
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from itertools import product
 
 import pandas as pd
@@ -32,9 +35,222 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
+def _report_path_for_run_dir(run_dir: str) -> str:
+    return os.path.join(run_dir, "benchmark_report.json")
+
+
+def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, object]:
+    cfg = report["config"]
+
+    row: dict[str, object] = {
+        "tag": tag,
+        "report_path": report_path,
+        "seed": int(cfg["seed"]),
+        "pmd_n_boot": int(cfg["pmd_n_boot"]),
+        "qq_plots": bool(cfg["qq_plots"]),
+        "alpha": float(cfg["alpha"]),
+        "fdr_q": float(cfg["fdr_q"]),
+        "n_genes": int(cfg["n_genes"]),
+        "guides_per_gene": int(cfg["guides_per_gene"]),
+        "n_control": int(cfg["n_control"]),
+        "n_treatment": int(cfg["n_treatment"]),
+        "n_samples": int(cfg["n_control"]) + int(cfg["n_treatment"]),
+        "normalization_mode": str(cfg.get("normalization_mode", "")),
+        "logratio_mode": str(cfg.get("logratio_mode", "")),
+        "n_reference_genes": int(cfg.get("n_reference_genes", 0)),
+        "depth_log_sd": float(cfg["depth_log_sd"]),
+        "n_batches": int(cfg["n_batches"]),
+        "batch_confounding_strength": float(cfg["batch_confounding_strength"]),
+        "batch_depth_log_sd": float(cfg["batch_depth_log_sd"]),
+        "treatment_depth_multiplier": float(cfg["treatment_depth_multiplier"]),
+        "include_depth_covariate": bool(cfg["include_depth_covariate"]),
+        "depth_covariate_mode": str(cfg.get("depth_covariate_mode", "")),
+        "include_batch_covariate": bool(cfg["include_batch_covariate"]),
+        "response_mode": str(cfg["response_mode"]),
+        "guide_lambda_log_mean": float(cfg["guide_lambda_log_mean"]),
+        "guide_lambda_log_sd": float(cfg["guide_lambda_log_sd"]),
+        "gene_lambda_log_sd": float(cfg["gene_lambda_log_sd"]),
+        "methods": ",".join([str(m) for m in cfg["methods"]]),
+        "lmm_scope": str(cfg["lmm_scope"]),
+        "lmm_q_meta": float(cfg["lmm_q_meta"]),
+        "lmm_q_het": float(cfg["lmm_q_het"]),
+        "lmm_audit_n": int(cfg["lmm_audit_n"]),
+        "lmm_audit_seed": int(cfg["lmm_audit_seed"]),
+        "lmm_max_genes_per_focal_var": cfg["lmm_max_genes_per_focal_var"],
+        "frac_signal": float(cfg["frac_signal"]),
+        "effect_sd": float(cfg["effect_sd"]),
+        "guide_slope_sd": float(cfg["guide_slope_sd"]),
+        "offtarget_guide_frac": float(cfg["offtarget_guide_frac"]),
+        "offtarget_slope_sd": float(cfg["offtarget_slope_sd"]),
+        "nb_overdispersion": float(cfg["nb_overdispersion"]),
+    }
+
+    runtime = report.get("runtime_sec", {})
+    row.update({f"runtime_{k}": float(v) for k, v in runtime.items()})
+
+    qq = report.get("qq", {})
+
+    counts_qc = report.get("counts_qc", {})
+    mean_disp = counts_qc.get("mean_dispersion", {})
+    depth_proxy = counts_qc.get("depth_proxy", {})
+    row["counts_median_mean"] = mean_disp.get("median_mean")
+    row["counts_median_phi_hat"] = mean_disp.get("median_phi_hat")
+    row["counts_corr_log_mean_log_var"] = mean_disp.get("corr_log_mean_log_var")
+    row["depth_log_libsize_sd"] = depth_proxy.get("log_libsize_sd")
+    row["depth_corr_treatment_log_libsize"] = depth_proxy.get("corr_treatment_log_libsize")
+
+    design = report.get("design_matrix", {})
+    row["design_rank"] = design.get("rank")
+    row["design_cond"] = design.get("cond")
+    design_corr = design.get("corr", {})
+    row["design_corr_treatment_log_libsize_centered"] = design_corr.get("treatment", {}).get("log_libsize_centered")
+
+    het = report.get("heterogeneity", {})
+    row["theta_dev_sd_mean"] = het.get("theta_dev_sd_mean")
+    row["theta_dev_sd_median"] = het.get("theta_dev_sd_median")
+    row["meta_tau_corr_true"] = het.get("meta_tau_corr_true")
+    row["meta_tau_n"] = het.get("meta_tau_n")
+    row["lmm_tau_corr_true"] = het.get("lmm_tau_corr_true")
+    row["lmm_tau_n"] = het.get("lmm_tau_n")
+
+    if "meta" in report:
+        row["meta_null_mean_p"] = report["meta"]["null"]["mean"]
+        row["meta_null_prop_lt_alpha"] = report["meta"]["null"]["prop_lt_alpha"]
+        row["meta_null_lambda_gc"] = qq.get("meta_p_null", {}).get("lambda_gc")
+        row["meta_null_ks"] = report["meta"].get("ks_uniform_null", {}).get("ks")
+        row["meta_null_ks_p"] = report["meta"].get("ks_uniform_null", {}).get("ks_p")
+        row["meta_null_ks_n"] = report["meta"].get("ks_uniform_null", {}).get("n")
+        row["meta_roc_auc"] = report["meta"].get("roc_auc")
+        row["meta_average_precision"] = report["meta"].get("average_precision")
+        theta = report["meta"].get("theta_metrics", {})
+        row["meta_theta_corr_all"] = theta.get("corr_all")
+        row["meta_theta_rmse_all"] = theta.get("rmse_all")
+        row["meta_theta_corr_signal"] = theta.get("corr_signal")
+        row["meta_theta_rmse_signal"] = theta.get("rmse_signal")
+        row["meta_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+        row["meta_theta_n_all"] = theta.get("n_all")
+        row["meta_theta_n_signal"] = theta.get("n_signal")
+        bias = report["meta"].get("theta_bias_null", {})
+        row["meta_theta_null_mean"] = bias.get("mean_null")
+        row["meta_theta_null_median"] = bias.get("median_null")
+        row["meta_theta_null_abs_mean"] = bias.get("mean_abs_null")
+        row["meta_theta_null_n"] = bias.get("n_null")
+        row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
+        row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
+        row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
+        row["meta_alpha_fdr"] = report["meta"]["confusion_alpha"]["fdr"]
+        row["meta_alpha_n_called"] = report["meta"]["confusion_alpha"]["n_called"]
+        row["meta_q_fp"] = report["meta"]["confusion_fdr_q"]["fp"]
+        row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
+        row["meta_q_tpr"] = report["meta"]["confusion_fdr_q"]["tpr"]
+        row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
+    if "stouffer" in report:
+        row["stouffer_null_mean_p"] = report["stouffer"]["null"]["mean"]
+        row["stouffer_null_prop_lt_alpha"] = report["stouffer"]["null"]["prop_lt_alpha"]
+        row["stouffer_null_lambda_gc"] = qq.get("stouffer_p_null", {}).get("lambda_gc")
+        row["stouffer_null_ks"] = report["stouffer"].get("ks_uniform_null", {}).get("ks")
+        row["stouffer_null_ks_p"] = report["stouffer"].get("ks_uniform_null", {}).get("ks_p")
+        row["stouffer_null_ks_n"] = report["stouffer"].get("ks_uniform_null", {}).get("n")
+        row["stouffer_roc_auc"] = report["stouffer"].get("roc_auc")
+        row["stouffer_average_precision"] = report["stouffer"].get("average_precision")
+        row["stouffer_alpha_fp"] = report["stouffer"]["confusion_alpha"]["fp"]
+        row["stouffer_alpha_fpr"] = report["stouffer"]["confusion_alpha"]["fpr"]
+        row["stouffer_alpha_tpr"] = report["stouffer"]["confusion_alpha"]["tpr"]
+        row["stouffer_alpha_fdr"] = report["stouffer"]["confusion_alpha"]["fdr"]
+        row["stouffer_alpha_n_called"] = report["stouffer"]["confusion_alpha"]["n_called"]
+        row["stouffer_q_fp"] = report["stouffer"]["confusion_fdr_q"]["fp"]
+        row["stouffer_q_fdr"] = report["stouffer"]["confusion_fdr_q"]["fdr"]
+        row["stouffer_q_tpr"] = report["stouffer"]["confusion_fdr_q"]["tpr"]
+        row["stouffer_q_n_called"] = report["stouffer"]["confusion_fdr_q"]["n_called"]
+    if "lmm_lrt" in report:
+        row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
+        row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
+        row["lmm_lrt_ok_frac"] = report["lmm_lrt"]["lrt_ok_frac"]
+        row["lmm_lrt_null_lambda_gc"] = qq.get("lmm_lrt_p_null", {}).get("lambda_gc")
+        row["lmm_lrt_null_ks"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks")
+        row["lmm_lrt_null_ks_p"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks_p")
+        row["lmm_lrt_null_ks_n"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("n")
+        row["lmm_lrt_roc_auc"] = report["lmm_lrt"].get("roc_auc")
+        row["lmm_lrt_average_precision"] = report["lmm_lrt"].get("average_precision")
+        theta = report["lmm_lrt"].get("theta_metrics", {})
+        row["lmm_lrt_theta_corr_all"] = theta.get("corr_all")
+        row["lmm_lrt_theta_rmse_all"] = theta.get("rmse_all")
+        row["lmm_lrt_theta_corr_signal"] = theta.get("corr_signal")
+        row["lmm_lrt_theta_rmse_signal"] = theta.get("rmse_signal")
+        row["lmm_lrt_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+        row["lmm_lrt_theta_n_all"] = theta.get("n_all")
+        row["lmm_lrt_theta_n_signal"] = theta.get("n_signal")
+        bias = report["lmm_lrt"].get("theta_bias_null", {})
+        row["lmm_lrt_theta_null_mean"] = bias.get("mean_null")
+        row["lmm_lrt_theta_null_median"] = bias.get("median_null")
+        row["lmm_lrt_theta_null_abs_mean"] = bias.get("mean_abs_null")
+        row["lmm_lrt_theta_null_n"] = bias.get("n_null")
+        row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
+        row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
+        row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
+        row["lmm_lrt_alpha_fdr"] = report["lmm_lrt"]["confusion_alpha"]["fdr"]
+        row["lmm_lrt_q_fp"] = report["lmm_lrt"]["confusion_fdr_q"]["fp"]
+        row["lmm_lrt_q_fdr"] = report["lmm_lrt"]["confusion_fdr_q"]["fdr"]
+        row["lmm_lrt_q_tpr"] = report["lmm_lrt"]["confusion_fdr_q"]["tpr"]
+    if "lmm_wald" in report:
+        row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
+        row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
+        row["lmm_wald_ok_frac"] = report["lmm_wald"]["wald_ok_frac"]
+        row["lmm_wald_null_lambda_gc"] = qq.get("lmm_wald_p_null", {}).get("lambda_gc")
+        row["lmm_wald_null_ks"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks")
+        row["lmm_wald_null_ks_p"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks_p")
+        row["lmm_wald_null_ks_n"] = report["lmm_wald"].get("ks_uniform_null", {}).get("n")
+        row["lmm_wald_roc_auc"] = report["lmm_wald"].get("roc_auc")
+        row["lmm_wald_average_precision"] = report["lmm_wald"].get("average_precision")
+        theta = report["lmm_wald"].get("theta_metrics", {})
+        row["lmm_wald_theta_corr_all"] = theta.get("corr_all")
+        row["lmm_wald_theta_rmse_all"] = theta.get("rmse_all")
+        row["lmm_wald_theta_corr_signal"] = theta.get("corr_signal")
+        row["lmm_wald_theta_rmse_signal"] = theta.get("rmse_signal")
+        row["lmm_wald_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
+        row["lmm_wald_theta_n_all"] = theta.get("n_all")
+        row["lmm_wald_theta_n_signal"] = theta.get("n_signal")
+        bias = report["lmm_wald"].get("theta_bias_null", {})
+        row["lmm_wald_theta_null_mean"] = bias.get("mean_null")
+        row["lmm_wald_theta_null_median"] = bias.get("median_null")
+        row["lmm_wald_theta_null_abs_mean"] = bias.get("mean_abs_null")
+        row["lmm_wald_theta_null_n"] = bias.get("n_null")
+        row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
+        row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
+        row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
+        row["lmm_wald_alpha_fdr"] = report["lmm_wald"]["confusion_alpha"]["fdr"]
+        row["lmm_wald_q_fp"] = report["lmm_wald"]["confusion_fdr_q"]["fp"]
+        row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
+        row["lmm_wald_q_tpr"] = report["lmm_wald"]["confusion_fdr_q"]["tpr"]
+
+    lmm_fit = report.get("lmm_fit", {})
+    if isinstance(lmm_fit, dict) and lmm_fit:
+        row["lmm_n_total"] = lmm_fit.get("n_total")
+        row["lmm_n_attempted"] = lmm_fit.get("n_attempted")
+        row["lmm_frac_attempted"] = lmm_fit.get("frac_attempted")
+        row["lmm_lrt_ok_frac_attempted"] = lmm_fit.get("lrt_ok_frac_attempted")
+        row["lmm_wald_ok_frac_attempted"] = lmm_fit.get("wald_ok_frac_attempted")
+        row["lmm_n_selected"] = lmm_fit.get("n_selected")
+
+        fracs = lmm_fit.get("method_fracs", {}) if isinstance(lmm_fit.get("method_fracs", {}), dict) else {}
+        row["lmm_frac_method_lmm"] = fracs.get("lmm")
+        row["lmm_frac_method_meta_fallback"] = fracs.get("meta_fallback")
+        row["lmm_frac_method_failed"] = fracs.get("failed")
+
+    return row
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a small count-depth benchmark grid and collect summaries (local).")
     parser.add_argument("--out-dir", required=True, type=str, help="Root output directory for the grid.")
+    parser.add_argument("--jobs", type=int, default=1, help="Max concurrent runs to execute (default: 1).")
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="If enabled, skip runs with an existing benchmark_report.json (default: disabled).",
+    )
+    parser.add_argument("--progress-every", type=int, default=25, help="Progress print interval in completed runs (default: 25).")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to run (default: 1 2 3).")
     parser.add_argument("--n-genes", type=int, nargs="+", default=[500], help="n_genes values to run (default: 500).")
     parser.add_argument("--guides-per-gene", type=int, nargs="+", default=[4], help="Guides per gene (default: 4).")
@@ -185,6 +401,8 @@ def main() -> None:
     include_batch_opts = [False, True] if args.include_batch_covariate is None else [bool(args.include_batch_covariate)]
 
     rows: list[dict[str, object]] = []
+    tasks: list[dict[str, object]] = []
+    n_resumed = 0
     for (
         seed,
         n_genes,
@@ -379,205 +597,57 @@ def main() -> None:
         cmd.append("--include-batch-covariate" if include_batch else "--no-include-batch-covariate")
         cmd.append("--qq-plots" if bool(args.qq_plots) else "--no-qq-plots")
 
-        report_path = _run_one(cmd)
-        report = _load_json(report_path)
+        existing_report_path = _report_path_for_run_dir(run_dir)
+        if bool(args.resume) and os.path.isfile(existing_report_path):
+            report = _load_json(existing_report_path)
+            rows.append(_row_from_report(tag=tag, report_path=existing_report_path, report=report))
+            n_resumed += 1
+        else:
+            tasks.append({"tag": tag, "cmd": cmd, "run_dir": run_dir})
 
-        row: dict[str, object] = {
-            "tag": tag,
-            "report_path": report_path,
-            "seed": seed,
-            "pmd_n_boot": int(report["config"]["pmd_n_boot"]),
-            "qq_plots": bool(report["config"]["qq_plots"]),
-            "alpha": float(report["config"]["alpha"]),
-            "fdr_q": float(report["config"]["fdr_q"]),
-            "n_genes": n_genes,
-            "guides_per_gene": int(report["config"]["guides_per_gene"]),
-            "n_control": int(report["config"]["n_control"]),
-            "n_treatment": int(report["config"]["n_treatment"]),
-            "n_samples": int(report["config"]["n_control"]) + int(report["config"]["n_treatment"]),
-            "normalization_mode": str(report["config"].get("normalization_mode", "")),
-            "logratio_mode": str(report["config"].get("logratio_mode", "")),
-            "n_reference_genes": int(report["config"].get("n_reference_genes", 0)),
-            "depth_log_sd": depth_log_sd,
-            "n_batches": int(report["config"]["n_batches"]),
-            "batch_confounding_strength": float(report["config"]["batch_confounding_strength"]),
-            "batch_depth_log_sd": float(report["config"]["batch_depth_log_sd"]),
-            "treatment_depth_multiplier": tdm,
-            "include_depth_covariate": include_depth,
-            "depth_covariate_mode": str(report["config"].get("depth_covariate_mode", "")),
-            "include_batch_covariate": include_batch,
-            "response_mode": report["config"]["response_mode"],
-            "guide_lambda_log_mean": float(report["config"]["guide_lambda_log_mean"]),
-            "guide_lambda_log_sd": float(report["config"]["guide_lambda_log_sd"]),
-            "gene_lambda_log_sd": float(report["config"]["gene_lambda_log_sd"]),
-            "methods": ",".join(report["config"]["methods"]),
-            "lmm_scope": str(report["config"]["lmm_scope"]),
-            "lmm_q_meta": float(report["config"]["lmm_q_meta"]),
-            "lmm_q_het": float(report["config"]["lmm_q_het"]),
-            "lmm_audit_n": int(report["config"]["lmm_audit_n"]),
-            "lmm_audit_seed": int(report["config"]["lmm_audit_seed"]),
-            "lmm_max_genes_per_focal_var": report["config"]["lmm_max_genes_per_focal_var"],
-            "frac_signal": float(report["config"]["frac_signal"]),
-            "effect_sd": float(report["config"]["effect_sd"]),
-            "guide_slope_sd": float(report["config"]["guide_slope_sd"]),
-            "offtarget_guide_frac": float(report["config"]["offtarget_guide_frac"]),
-            "offtarget_slope_sd": float(report["config"]["offtarget_slope_sd"]),
-            "nb_overdispersion": float(report["config"]["nb_overdispersion"]),
-        }
+    n_total = int(n_resumed + len(tasks))
+    if n_total == 0:
+        raise ValueError("no runs configured (empty grid)")
 
-        runtime = report.get("runtime_sec", {})
-        row.update({f"runtime_{k}": float(v) for k, v in runtime.items()})
+    jobs = int(args.jobs)
+    if jobs < 1:
+        raise ValueError("--jobs must be >= 1")
 
-        qq = report.get("qq", {})
+    print(
+        f"grid: total={n_total} resumed={n_resumed} to_run={len(tasks)} jobs={jobs} resume={bool(args.resume)}",
+        flush=True,
+    )
 
-        counts_qc = report.get("counts_qc", {})
-        mean_disp = counts_qc.get("mean_dispersion", {})
-        depth_proxy = counts_qc.get("depth_proxy", {})
-        row["counts_median_mean"] = mean_disp.get("median_mean")
-        row["counts_median_phi_hat"] = mean_disp.get("median_phi_hat")
-        row["counts_corr_log_mean_log_var"] = mean_disp.get("corr_log_mean_log_var")
-        row["depth_log_libsize_sd"] = depth_proxy.get("log_libsize_sd")
-        row["depth_corr_treatment_log_libsize"] = depth_proxy.get("corr_treatment_log_libsize")
-
-        design = report.get("design_matrix", {})
-        row["design_rank"] = design.get("rank")
-        row["design_cond"] = design.get("cond")
-        design_corr = design.get("corr", {})
-        row["design_corr_treatment_log_libsize_centered"] = design_corr.get("treatment", {}).get("log_libsize_centered")
-
-        het = report.get("heterogeneity", {})
-        row["theta_dev_sd_mean"] = het.get("theta_dev_sd_mean")
-        row["theta_dev_sd_median"] = het.get("theta_dev_sd_median")
-        row["meta_tau_corr_true"] = het.get("meta_tau_corr_true")
-        row["meta_tau_n"] = het.get("meta_tau_n")
-        row["lmm_tau_corr_true"] = het.get("lmm_tau_corr_true")
-        row["lmm_tau_n"] = het.get("lmm_tau_n")
-
-        if "meta" in report:
-            row["meta_null_mean_p"] = report["meta"]["null"]["mean"]
-            row["meta_null_prop_lt_alpha"] = report["meta"]["null"]["prop_lt_alpha"]
-            row["meta_null_lambda_gc"] = qq.get("meta_p_null", {}).get("lambda_gc")
-            row["meta_null_ks"] = report["meta"].get("ks_uniform_null", {}).get("ks")
-            row["meta_null_ks_p"] = report["meta"].get("ks_uniform_null", {}).get("ks_p")
-            row["meta_null_ks_n"] = report["meta"].get("ks_uniform_null", {}).get("n")
-            row["meta_roc_auc"] = report["meta"].get("roc_auc")
-            row["meta_average_precision"] = report["meta"].get("average_precision")
-            theta = report["meta"].get("theta_metrics", {})
-            row["meta_theta_corr_all"] = theta.get("corr_all")
-            row["meta_theta_rmse_all"] = theta.get("rmse_all")
-            row["meta_theta_corr_signal"] = theta.get("corr_signal")
-            row["meta_theta_rmse_signal"] = theta.get("rmse_signal")
-            row["meta_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
-            row["meta_theta_n_all"] = theta.get("n_all")
-            row["meta_theta_n_signal"] = theta.get("n_signal")
-            bias = report["meta"].get("theta_bias_null", {})
-            row["meta_theta_null_mean"] = bias.get("mean_null")
-            row["meta_theta_null_median"] = bias.get("median_null")
-            row["meta_theta_null_abs_mean"] = bias.get("mean_abs_null")
-            row["meta_theta_null_n"] = bias.get("n_null")
-            row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
-            row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
-            row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
-            row["meta_alpha_fdr"] = report["meta"]["confusion_alpha"]["fdr"]
-            row["meta_alpha_n_called"] = report["meta"]["confusion_alpha"]["n_called"]
-            row["meta_q_fp"] = report["meta"]["confusion_fdr_q"]["fp"]
-            row["meta_q_fdr"] = report["meta"]["confusion_fdr_q"]["fdr"]
-            row["meta_q_tpr"] = report["meta"]["confusion_fdr_q"]["tpr"]
-            row["meta_q_n_called"] = report["meta"]["confusion_fdr_q"]["n_called"]
-        if "stouffer" in report:
-            row["stouffer_null_mean_p"] = report["stouffer"]["null"]["mean"]
-            row["stouffer_null_prop_lt_alpha"] = report["stouffer"]["null"]["prop_lt_alpha"]
-            row["stouffer_null_lambda_gc"] = qq.get("stouffer_p_null", {}).get("lambda_gc")
-            row["stouffer_null_ks"] = report["stouffer"].get("ks_uniform_null", {}).get("ks")
-            row["stouffer_null_ks_p"] = report["stouffer"].get("ks_uniform_null", {}).get("ks_p")
-            row["stouffer_null_ks_n"] = report["stouffer"].get("ks_uniform_null", {}).get("n")
-            row["stouffer_roc_auc"] = report["stouffer"].get("roc_auc")
-            row["stouffer_average_precision"] = report["stouffer"].get("average_precision")
-            row["stouffer_alpha_fp"] = report["stouffer"]["confusion_alpha"]["fp"]
-            row["stouffer_alpha_fpr"] = report["stouffer"]["confusion_alpha"]["fpr"]
-            row["stouffer_alpha_tpr"] = report["stouffer"]["confusion_alpha"]["tpr"]
-            row["stouffer_alpha_fdr"] = report["stouffer"]["confusion_alpha"]["fdr"]
-            row["stouffer_alpha_n_called"] = report["stouffer"]["confusion_alpha"]["n_called"]
-            row["stouffer_q_fp"] = report["stouffer"]["confusion_fdr_q"]["fp"]
-            row["stouffer_q_fdr"] = report["stouffer"]["confusion_fdr_q"]["fdr"]
-            row["stouffer_q_tpr"] = report["stouffer"]["confusion_fdr_q"]["tpr"]
-            row["stouffer_q_n_called"] = report["stouffer"]["confusion_fdr_q"]["n_called"]
-        if "lmm_lrt" in report:
-            row["lmm_lrt_null_mean_p"] = report["lmm_lrt"]["null"]["mean"]
-            row["lmm_lrt_null_prop_lt_alpha"] = report["lmm_lrt"]["null"]["prop_lt_alpha"]
-            row["lmm_lrt_ok_frac"] = report["lmm_lrt"]["lrt_ok_frac"]
-            row["lmm_lrt_null_lambda_gc"] = qq.get("lmm_lrt_p_null", {}).get("lambda_gc")
-            row["lmm_lrt_null_ks"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks")
-            row["lmm_lrt_null_ks_p"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("ks_p")
-            row["lmm_lrt_null_ks_n"] = report["lmm_lrt"].get("ks_uniform_null", {}).get("n")
-            row["lmm_lrt_roc_auc"] = report["lmm_lrt"].get("roc_auc")
-            row["lmm_lrt_average_precision"] = report["lmm_lrt"].get("average_precision")
-            theta = report["lmm_lrt"].get("theta_metrics", {})
-            row["lmm_lrt_theta_corr_all"] = theta.get("corr_all")
-            row["lmm_lrt_theta_rmse_all"] = theta.get("rmse_all")
-            row["lmm_lrt_theta_corr_signal"] = theta.get("corr_signal")
-            row["lmm_lrt_theta_rmse_signal"] = theta.get("rmse_signal")
-            row["lmm_lrt_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
-            row["lmm_lrt_theta_n_all"] = theta.get("n_all")
-            row["lmm_lrt_theta_n_signal"] = theta.get("n_signal")
-            bias = report["lmm_lrt"].get("theta_bias_null", {})
-            row["lmm_lrt_theta_null_mean"] = bias.get("mean_null")
-            row["lmm_lrt_theta_null_median"] = bias.get("median_null")
-            row["lmm_lrt_theta_null_abs_mean"] = bias.get("mean_abs_null")
-            row["lmm_lrt_theta_null_n"] = bias.get("n_null")
-            row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
-            row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
-            row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
-            row["lmm_lrt_alpha_fdr"] = report["lmm_lrt"]["confusion_alpha"]["fdr"]
-            row["lmm_lrt_q_fp"] = report["lmm_lrt"]["confusion_fdr_q"]["fp"]
-            row["lmm_lrt_q_fdr"] = report["lmm_lrt"]["confusion_fdr_q"]["fdr"]
-            row["lmm_lrt_q_tpr"] = report["lmm_lrt"]["confusion_fdr_q"]["tpr"]
-        if "lmm_wald" in report:
-            row["lmm_wald_null_mean_p"] = report["lmm_wald"]["null"]["mean"]
-            row["lmm_wald_null_prop_lt_alpha"] = report["lmm_wald"]["null"]["prop_lt_alpha"]
-            row["lmm_wald_ok_frac"] = report["lmm_wald"]["wald_ok_frac"]
-            row["lmm_wald_null_lambda_gc"] = qq.get("lmm_wald_p_null", {}).get("lambda_gc")
-            row["lmm_wald_null_ks"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks")
-            row["lmm_wald_null_ks_p"] = report["lmm_wald"].get("ks_uniform_null", {}).get("ks_p")
-            row["lmm_wald_null_ks_n"] = report["lmm_wald"].get("ks_uniform_null", {}).get("n")
-            row["lmm_wald_roc_auc"] = report["lmm_wald"].get("roc_auc")
-            row["lmm_wald_average_precision"] = report["lmm_wald"].get("average_precision")
-            theta = report["lmm_wald"].get("theta_metrics", {})
-            row["lmm_wald_theta_corr_all"] = theta.get("corr_all")
-            row["lmm_wald_theta_rmse_all"] = theta.get("rmse_all")
-            row["lmm_wald_theta_corr_signal"] = theta.get("corr_signal")
-            row["lmm_wald_theta_rmse_signal"] = theta.get("rmse_signal")
-            row["lmm_wald_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
-            row["lmm_wald_theta_n_all"] = theta.get("n_all")
-            row["lmm_wald_theta_n_signal"] = theta.get("n_signal")
-            bias = report["lmm_wald"].get("theta_bias_null", {})
-            row["lmm_wald_theta_null_mean"] = bias.get("mean_null")
-            row["lmm_wald_theta_null_median"] = bias.get("median_null")
-            row["lmm_wald_theta_null_abs_mean"] = bias.get("mean_abs_null")
-            row["lmm_wald_theta_null_n"] = bias.get("n_null")
-            row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
-            row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
-            row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
-            row["lmm_wald_alpha_fdr"] = report["lmm_wald"]["confusion_alpha"]["fdr"]
-            row["lmm_wald_q_fp"] = report["lmm_wald"]["confusion_fdr_q"]["fp"]
-            row["lmm_wald_q_fdr"] = report["lmm_wald"]["confusion_fdr_q"]["fdr"]
-            row["lmm_wald_q_tpr"] = report["lmm_wald"]["confusion_fdr_q"]["tpr"]
-
-        lmm_fit = report.get("lmm_fit", {})
-        if isinstance(lmm_fit, dict) and lmm_fit:
-            row["lmm_n_total"] = lmm_fit.get("n_total")
-            row["lmm_n_attempted"] = lmm_fit.get("n_attempted")
-            row["lmm_frac_attempted"] = lmm_fit.get("frac_attempted")
-            row["lmm_lrt_ok_frac_attempted"] = lmm_fit.get("lrt_ok_frac_attempted")
-            row["lmm_wald_ok_frac_attempted"] = lmm_fit.get("wald_ok_frac_attempted")
-            row["lmm_n_selected"] = lmm_fit.get("n_selected")
-
-            fracs = lmm_fit.get("method_fracs", {}) if isinstance(lmm_fit.get("method_fracs", {}), dict) else {}
-            row["lmm_frac_method_lmm"] = fracs.get("lmm")
-            row["lmm_frac_method_meta_fallback"] = fracs.get("meta_fallback")
-            row["lmm_frac_method_failed"] = fracs.get("failed")
-
-        rows.append(row)
+    t0 = time.monotonic()
+    n_done_from_tasks = 0
+    if tasks:
+        if jobs == 1:
+            for task in tasks:
+                report_path = _run_one(task["cmd"])
+                report = _load_json(report_path)
+                rows.append(_row_from_report(tag=str(task["tag"]), report_path=report_path, report=report))
+                n_done_from_tasks += 1
+                done = int(n_resumed + n_done_from_tasks)
+                if int(args.progress_every) > 0 and (done % int(args.progress_every) == 0 or done == n_total):
+                    elapsed = max(1e-9, time.monotonic() - t0)
+                    rate = done / elapsed
+                    eta_s = (n_total - done) / max(1e-9, rate)
+                    print(f"grid: {done}/{n_total} done (eta~{eta_s/60.0:.1f} min)", flush=True)
+        else:
+            with ThreadPoolExecutor(max_workers=jobs) as ex:
+                fut_to_task = {ex.submit(_run_one, t["cmd"]): t for t in tasks}
+                for fut in as_completed(fut_to_task):
+                    task = fut_to_task[fut]
+                    report_path = fut.result()
+                    report = _load_json(report_path)
+                    rows.append(_row_from_report(tag=str(task["tag"]), report_path=report_path, report=report))
+                    n_done_from_tasks += 1
+                    done = int(n_resumed + n_done_from_tasks)
+                    if int(args.progress_every) > 0 and (done % int(args.progress_every) == 0 or done == n_total):
+                        elapsed = max(1e-9, time.monotonic() - t0)
+                        rate = done / elapsed
+                        eta_s = (n_total - done) / max(1e-9, rate)
+                        print(f"grid: {done}/{n_total} done (eta~{eta_s/60.0:.1f} min)", flush=True)
 
     sort_cols = [
         "response_mode",
