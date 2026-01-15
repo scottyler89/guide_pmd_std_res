@@ -52,5 +52,38 @@ def test_benchmark_count_depth_report_has_qc_and_metrics(tmp_path):
     assert "roc_auc" in report["meta"]
     assert "average_precision" in report["meta"]
     assert "theta_metrics" in report["meta"]
+    assert "theta_bias_null" in report["meta"]
     assert set(report["meta"]["ks_uniform_null"].keys()) >= {"n", "ks", "ks_p"}
     assert set(report["meta"]["p_hist_null"].keys()) >= {"n", "bin_edges", "counts"}
+
+
+def test_benchmark_can_run_without_stouffer(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path / "bench_out"
+    cmd = [
+        sys.executable,
+        "scripts/benchmark_count_depth.py",
+        "--out-dir",
+        str(out_dir),
+        "--n-genes",
+        "25",
+        "--guides-per-gene",
+        "4",
+        "--n-control",
+        "6",
+        "--n-treatment",
+        "6",
+        "--frac-signal",
+        "0.0",
+        "--no-qq-plots",
+        "--methods",
+        "meta",
+        "lmm",
+        "--lmm-scope",
+        "all",
+        "--max-iter",
+        "50",
+    ]
+    proc = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=str(repo_root))
+    report_path = proc.stdout.strip().splitlines()[-1].strip()
+    assert report_path

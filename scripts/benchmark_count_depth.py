@@ -144,6 +144,21 @@ def _theta_metrics(joined: pd.DataFrame, *, theta_col: str) -> dict[str, float |
     }
 
 
+def _theta_bias_null(joined: pd.DataFrame, *, theta_col: str) -> dict[str, float | None]:
+    theta_hat = pd.to_numeric(joined[theta_col], errors="coerce").to_numpy(dtype=float)
+    is_signal = joined["is_signal"].to_numpy(dtype=bool)
+    null_mask = (~is_signal) & np.isfinite(theta_hat)
+    if int(np.sum(null_mask)) == 0:
+        return {"n_null": 0.0, "mean_null": None, "median_null": None, "mean_abs_null": None}
+    vals = theta_hat[null_mask]
+    return {
+        "n_null": float(int(vals.size)),
+        "mean_null": float(np.mean(vals)),
+        "median_null": float(np.median(vals)),
+        "mean_abs_null": float(np.mean(np.abs(vals))),
+    }
+
+
 def _write_mean_dispersion_tables(
     counts_df: pd.DataFrame,
     annotation_df: pd.DataFrame,
@@ -950,14 +965,15 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         qc_df.to_csv(qc_out_path, sep="\t", index=False)
 
     # Evaluate against truth at the gene level.
-    meta_join = truth_gene.merge(meta_df, on="gene_id", how="left") if not meta_df.empty else truth_gene.copy()
-    stouffer_join = truth_gene.merge(stouffer_df, on="gene_id", how="left") if not stouffer_df.empty else truth_gene.copy()
-    lmm_join = truth_gene.merge(lmm_df, on="gene_id", how="left") if not lmm_df.empty else truth_gene.copy()
-
-    meta_null = meta_join.loc[~meta_join["is_signal"], "p"]
-    meta_sig = meta_join.loc[meta_join["is_signal"], "p"]
-    stouffer_null = stouffer_join.loc[~stouffer_join["is_signal"], "p"]
-    stouffer_sig = stouffer_join.loc[stouffer_join["is_signal"], "p"]
+    meta_join = truth_gene.copy()
+    stouffer_join = truth_gene.copy()
+    lmm_join = truth_gene.copy()
+    if not meta_df.empty:
+        meta_join = truth_gene.merge(meta_df, on="gene_id", how="left")
+    if not stouffer_df.empty:
+        stouffer_join = truth_gene.merge(stouffer_df, on="gene_id", how="left")
+    if not lmm_df.empty:
+        lmm_join = truth_gene.merge(lmm_df, on="gene_id", how="left")
 
     lrt_p = lmm_join["lrt_p"] if "lrt_p" in lmm_join.columns else pd.Series(dtype=float)
     wald_p = lmm_join["wald_p"] if "wald_p" in lmm_join.columns else pd.Series(dtype=float)
@@ -989,6 +1005,8 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     }
 
     if "meta" in cfg.methods and not meta_df.empty:
+        meta_null = meta_join.loc[~meta_join["is_signal"], "p"]
+        meta_sig = meta_join.loc[meta_join["is_signal"], "p"]
         meta_called_alpha = np.isfinite(meta_join["p"].to_numpy(dtype=float)) & (meta_join["p"].to_numpy(dtype=float) < float(cfg.alpha))
         meta_called_q = np.isfinite(meta_join["p_adj"].to_numpy(dtype=float)) & (meta_join["p_adj"].to_numpy(dtype=float) < float(cfg.fdr_q))
         report["meta"] = {
@@ -999,11 +1017,14 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "roc_auc": _roc_auc(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
             "average_precision": _average_precision(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
             "theta_metrics": _theta_metrics(meta_join, theta_col="theta") if "theta" in meta_join.columns else {},
+            "theta_bias_null": _theta_bias_null(meta_join, theta_col="theta") if "theta" in meta_join.columns else {},
             "fdr": _fdr_summary(meta_join["p_adj"], meta_join["is_signal"], q=cfg.fdr_q),
             "confusion_alpha": _confusion(meta_called_alpha, meta_join["is_signal"].to_numpy(dtype=bool)),
             "confusion_fdr_q": _confusion(meta_called_q, meta_join["is_signal"].to_numpy(dtype=bool)),
         }
     if "stouffer" in cfg.methods and not stouffer_df.empty:
+        stouffer_null = stouffer_join.loc[~stouffer_join["is_signal"], "p"]
+        stouffer_sig = stouffer_join.loc[stouffer_join["is_signal"], "p"]
         st_p = stouffer_join["p"].to_numpy(dtype=float)
         st_p_adj = stouffer_join["p_adj"].to_numpy(dtype=float)
         is_signal_arr = stouffer_join["is_signal"].to_numpy(dtype=bool)
@@ -1043,6 +1064,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
             "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
             "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
+            "theta_bias_null": _theta_bias_null(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
             "fdr": _fdr_summary(lmm_join["lrt_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "lrt_p_adj" in lmm_join.columns else {},
             "lrt_ok_frac": float(np.mean(lmm_join["lrt_ok"].fillna(False).astype(bool))) if "lrt_ok" in lmm_join.columns else np.nan,
             "confusion_alpha": _confusion(lrt_called_alpha, is_signal_arr),
@@ -1056,6 +1078,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
             "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
             "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
+            "theta_bias_null": _theta_bias_null(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
             "fdr": _fdr_summary(lmm_join["wald_p_adj"], lmm_join["is_signal"], q=cfg.fdr_q) if "wald_p_adj" in lmm_join.columns else {},
             "wald_ok_frac": float(np.mean(lmm_join["wald_ok"].fillna(False).astype(bool))) if "wald_ok" in lmm_join.columns else np.nan,
             "confusion_alpha": _confusion(wald_called_alpha, is_signal_arr),

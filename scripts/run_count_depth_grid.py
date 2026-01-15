@@ -455,6 +455,11 @@ def main() -> None:
             row["meta_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
             row["meta_theta_n_all"] = theta.get("n_all")
             row["meta_theta_n_signal"] = theta.get("n_signal")
+            bias = report["meta"].get("theta_bias_null", {})
+            row["meta_theta_null_mean"] = bias.get("mean_null")
+            row["meta_theta_null_median"] = bias.get("median_null")
+            row["meta_theta_null_abs_mean"] = bias.get("mean_abs_null")
+            row["meta_theta_null_n"] = bias.get("n_null")
             row["meta_alpha_fp"] = report["meta"]["confusion_alpha"]["fp"]
             row["meta_alpha_fpr"] = report["meta"]["confusion_alpha"]["fpr"]
             row["meta_alpha_tpr"] = report["meta"]["confusion_alpha"]["tpr"]
@@ -500,6 +505,11 @@ def main() -> None:
             row["lmm_lrt_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
             row["lmm_lrt_theta_n_all"] = theta.get("n_all")
             row["lmm_lrt_theta_n_signal"] = theta.get("n_signal")
+            bias = report["lmm_lrt"].get("theta_bias_null", {})
+            row["lmm_lrt_theta_null_mean"] = bias.get("mean_null")
+            row["lmm_lrt_theta_null_median"] = bias.get("median_null")
+            row["lmm_lrt_theta_null_abs_mean"] = bias.get("mean_abs_null")
+            row["lmm_lrt_theta_null_n"] = bias.get("n_null")
             row["lmm_lrt_alpha_fp"] = report["lmm_lrt"]["confusion_alpha"]["fp"]
             row["lmm_lrt_alpha_fpr"] = report["lmm_lrt"]["confusion_alpha"]["fpr"]
             row["lmm_lrt_alpha_tpr"] = report["lmm_lrt"]["confusion_alpha"]["tpr"]
@@ -525,6 +535,11 @@ def main() -> None:
             row["lmm_wald_theta_sign_acc_signal"] = theta.get("sign_acc_signal")
             row["lmm_wald_theta_n_all"] = theta.get("n_all")
             row["lmm_wald_theta_n_signal"] = theta.get("n_signal")
+            bias = report["lmm_wald"].get("theta_bias_null", {})
+            row["lmm_wald_theta_null_mean"] = bias.get("mean_null")
+            row["lmm_wald_theta_null_median"] = bias.get("median_null")
+            row["lmm_wald_theta_null_abs_mean"] = bias.get("mean_abs_null")
+            row["lmm_wald_theta_null_n"] = bias.get("n_null")
             row["lmm_wald_alpha_fp"] = report["lmm_wald"]["confusion_alpha"]["fp"]
             row["lmm_wald_alpha_fpr"] = report["lmm_wald"]["confusion_alpha"]["fpr"]
             row["lmm_wald_alpha_tpr"] = report["lmm_wald"]["confusion_alpha"]["tpr"]
