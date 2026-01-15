@@ -127,7 +127,7 @@ def main() -> None:
             "50",
             "--max-iter",
             "60",
-            "--no-qq-plots",
+            "--qq-plots",
         ]
     elif args.preset == "standard":
         preset_args = [
@@ -137,6 +137,8 @@ def main() -> None:
             "3",
             "--n-genes",
             "500",
+            "--n-batches",
+            "1",
             "--treatment-depth-multiplier",
             "1.0",
             "2.0",
@@ -145,14 +147,14 @@ def main() -> None:
             "0.0",
             "0.2",
             "--effect-sd",
-            "0.2",
             "0.5",
             "--offtarget-guide-frac",
             "0.0",
-            "0.25",
+            "--offtarget-slope-sd",
+            "0.0",
             "--nb-overdispersion",
             "0.0",
-            "0.05",
+            "--no-include-batch-covariate",
             "--methods",
             "meta",
             "stouffer",
@@ -162,7 +164,7 @@ def main() -> None:
             "meta_or_het_fdr",
             "--lmm-max-genes-per-focal-var",
             "200",
-            "--no-qq-plots",
+            "--qq-plots",
         ]
     elif args.preset == "full":
         preset_args = [
@@ -178,46 +180,6 @@ def main() -> None:
             "12",
             "--n-treatment",
             "12",
-            "--depth-log-sd",
-            "0.5",
-            "1.0",
-            "--treatment-depth-multiplier",
-            "1.0",
-            "2.0",
-            "10.0",
-            "--n-batches",
-            "1",
-            "2",
-            "--batch-confounding-strength",
-            "0.0",
-            "0.7",
-            "--batch-depth-log-sd",
-            "0.0",
-            "0.5",
-            "--frac-signal",
-            "0.0",
-            "0.2",
-            "--effect-sd",
-            "0.2",
-            "0.5",
-            "--offtarget-guide-frac",
-            "0.0",
-            "0.25",
-            "--offtarget-slope-sd",
-            "0.0",
-            "0.2",
-            "--nb-overdispersion",
-            "0.0",
-            "0.05",
-            "--response-mode",
-            "log_counts",
-            "--normalization-mode",
-            "none",
-            "libsize_to_mean",
-            "median_ratio",
-            "--logratio-mode",
-            "none",
-            "clr_all",
             "--methods",
             "meta",
             "stouffer",
@@ -227,7 +189,7 @@ def main() -> None:
             "meta_or_het_fdr",
             "--lmm-max-genes-per-focal-var",
             "500",
-            "--no-qq-plots",
+            "--qq-plots",
         ]
 
     grid_args = preset_args + list(args.grid_args or []) + list(unknown)
@@ -274,11 +236,242 @@ def main() -> None:
     if grid_tsv is None:
         # For some presets, run multiple response-mode grids and concatenate.
         grid_variants: list[dict[str, object]] = []
+        if args.preset in {"standard", "full"}:
+            forbidden = {"--response-mode", "--pmd-n-boot", "--normalization-mode", "--logratio-mode", "--n-reference-genes"}
+            bad = [a for a in grid_args if str(a) in forbidden]
+            if bad:
+                raise ValueError(
+                    "multi-variant presets manage response/normalization/logratio flags internally; "
+                    f"remove these from --grid-args: {sorted(set(bad))}"
+                )
+
         if args.preset == "standard":
             grid_variants = [
-                {"name": "log_counts", "extra_args": ["--response-mode", "log_counts"]},
+                {
+                    "name": "log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "libsize_to_mean",
+                        "cpm",
+                        "median_ratio",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "alr_refset",
+                        "--n-reference-genes",
+                        "50",
+                    ],
+                },
+                {
+                    "name": "guide_zscore_log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "guide_zscore_log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "libsize_to_mean",
+                        "cpm",
+                        "median_ratio",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "alr_refset",
+                        "--n-reference-genes",
+                        "50",
+                    ],
+                },
                 {"name": "pmd_std_res", "extra_args": ["--response-mode", "pmd_std_res", "--pmd-n-boot", "50"]},
             ]
+        elif args.preset == "full":
+            processing: list[dict[str, object]] = [
+                {
+                    "name": "log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "libsize_to_mean",
+                        "cpm",
+                        "median_ratio",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "alr_refset",
+                        "--n-reference-genes",
+                        "50",
+                    ],
+                },
+                {
+                    "name": "guide_zscore_log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "guide_zscore_log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "libsize_to_mean",
+                        "cpm",
+                        "median_ratio",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "alr_refset",
+                        "--n-reference-genes",
+                        "50",
+                    ],
+                },
+                {"name": "pmd_std_res", "extra_args": ["--response-mode", "pmd_std_res", "--pmd-n-boot", "100"]},
+            ]
+
+            scenarios: list[dict[str, object]] = [
+                {
+                    "name": "null_depth",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "2.0",
+                        "10.0",
+                        "--frac-signal",
+                        "0.0",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
+                        "--no-include-batch-covariate",
+                    ],
+                },
+                {
+                    "name": "signal_depth",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "2.0",
+                        "10.0",
+                        "--frac-signal",
+                        "0.2",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
+                        "--no-include-batch-covariate",
+                    ],
+                },
+                {
+                    "name": "null_batch",
+                    "extra_args": [
+                        "--n-batches",
+                        "2",
+                        "--batch-confounding-strength",
+                        "0.7",
+                        "--batch-depth-log-sd",
+                        "0.5",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "--frac-signal",
+                        "0.0",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
+                        "--no-include-depth-covariate",
+                    ],
+                },
+                {
+                    "name": "signal_batch",
+                    "extra_args": [
+                        "--n-batches",
+                        "2",
+                        "--batch-confounding-strength",
+                        "0.7",
+                        "--batch-depth-log-sd",
+                        "0.5",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "--frac-signal",
+                        "0.2",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
+                        "--no-include-depth-covariate",
+                    ],
+                },
+                {
+                    "name": "signal_offtarget",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "--frac-signal",
+                        "0.2",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.25",
+                        "--offtarget-slope-sd",
+                        "0.2",
+                        "--nb-overdispersion",
+                        "0.0",
+                        "--no-include-depth-covariate",
+                        "--no-include-batch-covariate",
+                    ],
+                },
+                {
+                    "name": "signal_overdispersed",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "--frac-signal",
+                        "0.2",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.05",
+                        "--no-include-depth-covariate",
+                        "--no-include-batch-covariate",
+                    ],
+                },
+            ]
+
+            grid_variants = []
+            for s in scenarios:
+                for p in processing:
+                    grid_variants.append(
+                        {
+                            "name": f"{s['name']}__{p['name']}",
+                            "extra_args": [*p["extra_args"], *s["extra_args"]],
+                        }
+                    )
 
         if not grid_variants:
             grid_variants = [{"name": "grid", "extra_args": []}]
@@ -290,14 +483,6 @@ def main() -> None:
             os.makedirs(variant_out_dir, exist_ok=True)
 
             existing = os.path.join(variant_out_dir, "count_depth_grid_summary.tsv")
-            if bool(args.resume) and os.path.isfile(existing):
-                if grid_args:
-                    raise ValueError(
-                        "cannot reuse an existing grid TSV while also passing grid args "
-                        "(remove --grid-args/extra grid flags, or use a fresh --out-dir)"
-                    )
-                grid_tsv_paths.append(existing)
-                continue
 
             cmd = [sys.executable, _script_path("run_count_depth_grid.py"), "--out-dir", variant_out_dir]
             if bool(args.resume):
