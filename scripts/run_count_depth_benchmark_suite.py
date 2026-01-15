@@ -47,7 +47,7 @@ def main() -> None:
         nargs="*",
         help=(
             "Extra args passed to scripts/run_count_depth_grid.py (excluding --out-dir). "
-            "Suite flags (e.g. --heatmaps) will not be forwarded."
+            "Any unrecognized args are also forwarded to the grid runner."
         ),
     )
     parser.add_argument(
@@ -56,7 +56,11 @@ def main() -> None:
         default=False,
         help="If enabled, generate heatmap panels (can produce many files; default: disabled).",
     )
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    unknown = [a for a in unknown if a != "--"]
+    grid_args = list(args.grid_args or []) + list(unknown)
+    if args.grid_tsv is not None and grid_args:
+        raise ValueError("cannot use --grid-args (or extra grid flags) together with --grid-tsv")
 
     out_dir = str(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -68,15 +72,15 @@ def main() -> None:
         "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "out_dir": out_dir,
         "grid_out_dir": grid_out_dir,
-        "grid_args": args.grid_args or [],
+        "grid_args": grid_args,
         "paths": {},
     }
 
     grid_tsv = args.grid_tsv
     if grid_tsv is None:
         cmd = [sys.executable, _script_path("run_count_depth_grid.py"), "--out-dir", grid_out_dir]
-        if args.grid_args:
-            cmd.extend(args.grid_args)
+        if grid_args:
+            cmd.extend(grid_args)
         grid_tsv = _run_and_last_line(cmd)
     manifest["paths"]["grid_tsv"] = grid_tsv
 
