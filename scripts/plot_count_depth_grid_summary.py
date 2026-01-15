@@ -158,6 +158,8 @@ def main() -> None:
     x_tdm = "treatment_depth_multiplier" if "treatment_depth_multiplier" in df.columns else None
     x_esd = "effect_sd" if "effect_sd" in df.columns else None
     x_ngenes = "n_genes" if "n_genes" in df.columns else None
+    x_nsamples = "n_samples" if "n_samples" in df.columns else None
+    x_gpg = "guides_per_gene" if "guides_per_gene" in df.columns else None
 
     plots_made = 0
 
@@ -214,6 +216,71 @@ def main() -> None:
                 out_path=os.path.join(args.out_dir, f"runtime__{runtime_col}.png"),
                 title=f"Runtime — {runtime_col}",
                 y_label="seconds",
+                hline=None,
+            )
+            plots_made += 1
+        if runtime_col in df.columns and x_nsamples is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=runtime_col,
+                x_col=x_nsamples,
+                out_path=os.path.join(args.out_dir, f"runtime__{runtime_col}__vs_n_samples.png"),
+                title=f"Runtime vs n_samples — {runtime_col}",
+                y_label="seconds",
+                hline=None,
+            )
+            plots_made += 1
+        if runtime_col in df.columns and x_gpg is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=runtime_col,
+                x_col=x_gpg,
+                out_path=os.path.join(args.out_dir, f"runtime__{runtime_col}__vs_guides_per_gene.png"),
+                title=f"Runtime vs guides_per_gene — {runtime_col}",
+                y_label="seconds",
+                hline=None,
+            )
+            plots_made += 1
+
+    # LMM fit stability / failure rates (when present).
+    for metric_col, title, ylab in [
+        ("lmm_frac_attempted", "LMM attempted fraction (selected/total)", "fraction"),
+        ("lmm_frac_method_lmm", "LMM success fraction among attempted", "fraction"),
+        ("lmm_frac_method_meta_fallback", "LMM meta-fallback fraction among attempted", "fraction"),
+        ("lmm_frac_method_failed", "LMM failed fraction among attempted", "fraction"),
+        ("lmm_lrt_ok_frac_attempted", "LMM LRT ok fraction among attempted", "fraction"),
+        ("lmm_wald_ok_frac_attempted", "LMM Wald ok fraction among attempted", "fraction"),
+    ]:
+        if metric_col in df.columns and x_ngenes is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=metric_col,
+                x_col=x_ngenes,
+                out_path=os.path.join(args.out_dir, f"lmm_fit__{metric_col}__vs_n_genes.png"),
+                title=f"{title} vs n_genes",
+                y_label=ylab,
+                hline=None,
+            )
+            plots_made += 1
+        if metric_col in df.columns and x_nsamples is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=metric_col,
+                x_col=x_nsamples,
+                out_path=os.path.join(args.out_dir, f"lmm_fit__{metric_col}__vs_n_samples.png"),
+                title=f"{title} vs n_samples",
+                y_label=ylab,
+                hline=None,
+            )
+            plots_made += 1
+        if metric_col in df.columns and x_gpg is not None:
+            _plot_metric_grid(
+                df,
+                metric_col=metric_col,
+                x_col=x_gpg,
+                out_path=os.path.join(args.out_dir, f"lmm_fit__{metric_col}__vs_guides_per_gene.png"),
+                title=f"{title} vs guides_per_gene",
+                y_label=ylab,
                 hline=None,
             )
             plots_made += 1
