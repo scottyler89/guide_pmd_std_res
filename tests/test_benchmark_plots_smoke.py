@@ -293,3 +293,105 @@ def test_plot_benchmark_method_agreement_smoke(tmp_path):
     pngs = sorted(out_dir.glob("*.png"))
     assert pngs
     assert all(p.stat().st_size > 0 for p in pngs)
+
+
+def test_run_count_depth_benchmark_suite_smoke(tmp_path):
+    pytest.importorskip("matplotlib")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path / "suite"
+    grid_tsv = tmp_path / "grid.tsv"
+
+    # Minimal raw grid TSV + minimal benchmark report JSONs for p-hist aggregation.
+    edges = [i / 10.0 for i in range(11)]
+    report1 = tmp_path / "r1.json"
+    report2 = tmp_path / "r2.json"
+    report1.write_text(
+        '{"config":{"fdr_q":0.1,"alpha":0.05},"meta":{"p_hist_null":{"n":10.0,"bin_edges":'
+        + str(edges).replace(" ", "")
+        + ',"counts":[1,1,1,1,1,1,1,1,1,1]}}}',
+        encoding="utf-8",
+    )
+    report2.write_text(
+        '{"config":{"fdr_q":0.1,"alpha":0.05},"meta":{"p_hist_null":{"n":10.0,"bin_edges":'
+        + str(edges).replace(" ", "")
+        + ',"counts":[2,0,1,1,1,1,1,1,1,1]}}}',
+        encoding="utf-8",
+    )
+
+    df = pd.DataFrame(
+        [
+            {
+                "tag": "null",
+                "report_path": str(report1),
+                "seed": 1,
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "none",
+                "include_depth_covariate": False,
+                "include_batch_covariate": False,
+                "n_genes": 20,
+                "guides_per_gene": 4,
+                "n_control": 4,
+                "n_treatment": 4,
+                "n_samples": 8,
+                "depth_log_sd": 1.0,
+                "treatment_depth_multiplier": 2.0,
+                "frac_signal": 0.0,
+                "effect_sd": 0.5,
+                "alpha": 0.05,
+                "fdr_q": 0.1,
+                "runtime_meta": 0.2,
+                "meta_null_lambda_gc": 1.05,
+                "meta_alpha_fpr": 0.05,
+                "meta_null_ks": 0.1,
+                "depth_corr_treatment_log_libsize": 0.8,
+                "meta_theta_null_mean": 0.4,
+            },
+            {
+                "tag": "signal",
+                "report_path": str(report2),
+                "seed": 1,
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "none",
+                "include_depth_covariate": False,
+                "include_batch_covariate": False,
+                "n_genes": 20,
+                "guides_per_gene": 4,
+                "n_control": 4,
+                "n_treatment": 4,
+                "n_samples": 8,
+                "depth_log_sd": 1.0,
+                "treatment_depth_multiplier": 2.0,
+                "frac_signal": 0.2,
+                "effect_sd": 0.5,
+                "alpha": 0.05,
+                "fdr_q": 0.1,
+                "runtime_meta": 0.2,
+                "meta_q_tpr": 0.6,
+                "meta_q_fdr": 0.1,
+                "meta_roc_auc": 0.8,
+                "meta_average_precision": 0.75,
+                "meta_theta_rmse_signal": 0.2,
+                "meta_theta_corr_signal": 0.7,
+                "meta_theta_sign_acc_signal": 0.9,
+            },
+        ]
+    )
+    df.to_csv(grid_tsv, sep="\t", index=False)
+
+    cmd = [
+        sys.executable,
+        "scripts/run_count_depth_benchmark_suite.py",
+        "--out-dir",
+        str(out_dir),
+        "--grid-tsv",
+        str(grid_tsv),
+    ]
+    proc = subprocess.run(cmd, check=True, cwd=str(repo_root), capture_output=True, text=True)
+    manifest_path = proc.stdout.strip().splitlines()[-1].strip()
+    assert manifest_path
+    assert (out_dir / "suite_manifest.json").is_file()

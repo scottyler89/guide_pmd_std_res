@@ -386,5 +386,6 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] estimated treatment effect vs simulated depth proxy correlation (via `scripts/plot_count_depth_confounding_diagnostics.py`)
 
 #### P4.7 — Reporting + Reproducibility
-- [ ] Standardize output directory naming to encode the benchmark pipeline (response + normalization + depth mode) without ambiguity.
-- [ ] Ensure every figure can be regenerated from the written TSV/JSON artifacts (scripts remain consumer-only; no hidden recomputation).
+- [x] Standardize output directory naming to encode the benchmark pipeline (response + normalization + depth mode) without ambiguity.
+- [x] Ensure every figure can be regenerated from the written TSV/JSON artifacts (scripts remain consumer-only; no hidden recomputation).
+  - [x] Convenience runner: `scripts/run_count_depth_benchmark_suite.py` (grid → aggregate → figures).
