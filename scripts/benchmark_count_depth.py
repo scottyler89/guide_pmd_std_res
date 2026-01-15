@@ -560,6 +560,21 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
     fdr = (fp / n_called) if n_called else None
     ppv = (tp / n_called) if n_called else None
 
+    tnr = (tn / n_null) if n_null else None
+    fnr = (fn / n_signal) if n_signal else None
+    npv = (tn / (tn + fn)) if (tn + fn) else None
+    acc = ((tp + tn) / n_total) if n_total else None
+    f1 = (2.0 * tp / (2.0 * tp + fp + fn)) if (2 * tp + fp + fn) else None
+
+    bal_acc = None
+    if tpr is not None and tnr is not None:
+        bal_acc = 0.5 * (float(tpr) + float(tnr))
+
+    mcc = None
+    denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    if denom > 0:
+        mcc = float((tp * tn - fp * fn) / float(np.sqrt(denom)))
+
     return {
         "n_total": n_total,
         "n_signal": n_signal,
@@ -573,6 +588,13 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
         "fpr": fpr,
         "fdr": fdr,
         "ppv": ppv,
+        "tnr": tnr,
+        "fnr": fnr,
+        "npv": npv,
+        "accuracy": acc,
+        "f1": f1,
+        "balanced_accuracy": bal_acc,
+        "mcc": mcc,
     }
 
 
