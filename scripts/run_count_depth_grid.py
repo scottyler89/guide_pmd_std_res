@@ -37,9 +37,9 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True, type=str, help="Root output directory for the grid.")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to run (default: 1 2 3).")
     parser.add_argument("--n-genes", type=int, nargs="+", default=[500], help="n_genes values to run (default: 500).")
-    parser.add_argument("--guides-per-gene", type=int, default=4, help="Guides per gene.")
-    parser.add_argument("--n-control", type=int, default=12, help="Number of control samples.")
-    parser.add_argument("--n-treatment", type=int, default=12, help="Number of treatment samples.")
+    parser.add_argument("--guides-per-gene", type=int, nargs="+", default=[4], help="Guides per gene (default: 4).")
+    parser.add_argument("--n-control", type=int, nargs="+", default=[12], help="Number of control samples (default: 12).")
+    parser.add_argument("--n-treatment", type=int, nargs="+", default=[12], help="Number of treatment samples (default: 12).")
     parser.add_argument(
         "--guide-lambda-log-mean",
         type=float,
@@ -188,6 +188,9 @@ def main() -> None:
     for (
         seed,
         n_genes,
+        guides_per_gene,
+        n_control,
+        n_treatment,
         depth_log_sd,
         n_batches,
         batch_strength,
@@ -213,6 +216,9 @@ def main() -> None:
     ) in product(
         [int(s) for s in args.seeds],
         [int(n) for n in args.n_genes],
+        [int(x) for x in args.guides_per_gene],
+        [int(x) for x in args.n_control],
+        [int(x) for x in args.n_treatment],
         [float(x) for x in args.depth_log_sd],
         [int(x) for x in args.n_batches],
         [float(x) for x in args.batch_confounding_strength],
@@ -247,9 +253,9 @@ def main() -> None:
             "logratio_mode": str(logratio_mode),
             "n_reference_genes": int(args.n_reference_genes),
             "n_genes": n_genes,
-            "guides_per_gene": int(args.guides_per_gene),
-            "n_control": int(args.n_control),
-            "n_treatment": int(args.n_treatment),
+            "guides_per_gene": int(guides_per_gene),
+            "n_control": int(n_control),
+            "n_treatment": int(n_treatment),
             "guide_lambda_log_mean": float(args.guide_lambda_log_mean),
             "guide_lambda_log_sd": float(guide_lambda_log_sd),
             "gene_lambda_log_sd": float(gene_lambda_log_sd),
@@ -285,6 +291,8 @@ def main() -> None:
             f"__norm={normalization_mode}"
             f"__lr={logratio_mode}"
             f"__ng={n_genes}"
+            f"__gpg={int(guides_per_gene)}"
+            f"__ns={int(n_control)+int(n_treatment)}"
             f"__tdm={tdm}"
             f"__fs={frac_signal}"
             f"__lmm={lmm_scope}"
@@ -300,11 +308,11 @@ def main() -> None:
             "--n-genes",
             str(n_genes),
             "--guides-per-gene",
-            str(int(args.guides_per_gene)),
+            str(int(guides_per_gene)),
             "--n-control",
-            str(int(args.n_control)),
+            str(int(n_control)),
             "--n-treatment",
-            str(int(args.n_treatment)),
+            str(int(n_treatment)),
             "--guide-lambda-log-mean",
             str(float(args.guide_lambda_log_mean)),
             "--guide-lambda-log-sd",
@@ -380,6 +388,9 @@ def main() -> None:
             "fdr_q": float(report["config"]["fdr_q"]),
             "n_genes": n_genes,
             "guides_per_gene": int(report["config"]["guides_per_gene"]),
+            "n_control": int(report["config"]["n_control"]),
+            "n_treatment": int(report["config"]["n_treatment"]),
+            "n_samples": int(report["config"]["n_control"]) + int(report["config"]["n_treatment"]),
             "normalization_mode": str(report["config"].get("normalization_mode", "")),
             "logratio_mode": str(report["config"].get("logratio_mode", "")),
             "n_reference_genes": int(report["config"].get("n_reference_genes", 0)),
@@ -572,6 +583,10 @@ def main() -> None:
         "n_reference_genes",
         "n_genes",
         "depth_log_sd",
+        "guides_per_gene",
+        "n_control",
+        "n_treatment",
+        "n_samples",
         "n_batches",
         "batch_confounding_strength",
         "batch_depth_log_sd",
