@@ -33,6 +33,18 @@ def _ks_uniform(p: pd.Series) -> dict[str, float | None]:
     return {"n": float(p_arr.size), "ks": float(res.statistic), "ks_p": float(res.pvalue)}
 
 
+def _p_hist(p: pd.Series, *, n_bins: int = 20) -> dict[str, object]:
+    p_arr = p.to_numpy(dtype=float)
+    mask = np.isfinite(p_arr) & (p_arr >= 0.0) & (p_arr <= 1.0)
+    p_arr = p_arr[mask]
+    if p_arr.size == 0:
+        edges = np.linspace(0.0, 1.0, int(n_bins) + 1, dtype=float)
+        return {"n": 0.0, "bin_edges": edges.tolist(), "counts": [0.0] * int(n_bins)}
+    edges = np.linspace(0.0, 1.0, int(n_bins) + 1, dtype=float)
+    counts, _ = np.histogram(p_arr, bins=edges)
+    return {"n": float(p_arr.size), "bin_edges": edges.tolist(), "counts": counts.astype(float).tolist()}
+
+
 def _roc_auc(y_true: np.ndarray, score: np.ndarray) -> float | None:
     from scipy.stats import rankdata
 
@@ -983,6 +995,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "null": _summarize_p(meta_null, alpha=cfg.alpha),
             "signal": _summarize_p(meta_sig, alpha=cfg.alpha),
             "ks_uniform_null": _ks_uniform(meta_null),
+            "p_hist_null": _p_hist(meta_null, n_bins=20),
             "roc_auc": _roc_auc(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
             "average_precision": _average_precision(meta_join["is_signal"].to_numpy(dtype=bool), _score_from_p_impute_nan_as_1(meta_join["p"])),
             "theta_metrics": _theta_metrics(meta_join, theta_col="theta") if "theta" in meta_join.columns else {},
@@ -1001,6 +1014,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "null": _summarize_p(stouffer_null, alpha=cfg.alpha),
             "signal": _summarize_p(stouffer_sig, alpha=cfg.alpha),
             "ks_uniform_null": _ks_uniform(stouffer_null),
+            "p_hist_null": _p_hist(stouffer_null, n_bins=20),
             "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(stouffer_join["p"])),
             "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(stouffer_join["p"])),
             "fdr": _fdr_summary(stouffer_join["p_adj"], stouffer_join["is_signal"], q=cfg.fdr_q),
@@ -1025,6 +1039,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "null": _summarize_p(lrt_null, alpha=cfg.alpha),
             "signal": _summarize_p(lrt_sig, alpha=cfg.alpha),
             "ks_uniform_null": _ks_uniform(lrt_null),
+            "p_hist_null": _p_hist(lrt_null, n_bins=20),
             "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
             "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["lrt_p"])),
             "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},
@@ -1037,6 +1052,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "null": _summarize_p(wald_null, alpha=cfg.alpha),
             "signal": _summarize_p(wald_sig, alpha=cfg.alpha),
             "ks_uniform_null": _ks_uniform(wald_null),
+            "p_hist_null": _p_hist(wald_null, n_bins=20),
             "roc_auc": _roc_auc(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
             "average_precision": _average_precision(is_signal_arr, _score_from_p_impute_nan_as_1(lmm_join["wald_p"])),
             "theta_metrics": _theta_metrics(lmm_join, theta_col="theta") if "theta" in lmm_join.columns else {},

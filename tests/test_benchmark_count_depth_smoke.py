@@ -48,7 +48,9 @@ def test_benchmark_count_depth_report_has_qc_and_metrics(tmp_path):
 
     assert "meta" in report
     assert "ks_uniform_null" in report["meta"]
+    assert "p_hist_null" in report["meta"]
     assert "roc_auc" in report["meta"]
     assert "average_precision" in report["meta"]
     assert "theta_metrics" in report["meta"]
     assert set(report["meta"]["ks_uniform_null"].keys()) >= {"n", "ks", "ks_p"}
+    assert set(report["meta"]["p_hist_null"].keys()) >= {"n", "bin_edges", "counts"}
