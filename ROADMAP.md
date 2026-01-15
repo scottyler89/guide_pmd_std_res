@@ -347,7 +347,7 @@ Goal: quantify correctness along multiple axes, not just FDR.
 - [ ] Calibration (null):
   - [x] QQ + `lambda_gc` (recorded numerically by default; optional QQ plot PNGs)
   - [x] KS distance vs Uniform(0,1) (recorded numerically)
-  - [ ] p-histograms (plots optional)
+  - [x] p-histograms (recorded in `benchmark_report.json` under `*_p_hist_null`; plotted via `scripts/plot_count_depth_p_histograms.py`)
 - [ ] Detection (signal):
   - [x] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
   - [x] power curves vs effect size (`effect_sd`) at fixed FDR q (via `scripts/plot_count_depth_grid_summary.py`)
