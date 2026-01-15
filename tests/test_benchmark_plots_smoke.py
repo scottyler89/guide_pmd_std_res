@@ -183,3 +183,113 @@ def test_plot_count_depth_p_histograms_smoke(tmp_path):
     pngs = sorted(out_dir.glob("*.png"))
     assert pngs
     assert all(p.stat().st_size > 0 for p in pngs)
+
+
+def test_plot_count_depth_confounding_diagnostics_smoke(tmp_path):
+    pytest.importorskip("matplotlib")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    grid_path = tmp_path / "grid.tsv"
+    out_dir = tmp_path / "out"
+
+    df = pd.DataFrame(
+        [
+            {
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "none",
+                "include_batch_covariate": False,
+                "frac_signal": 0.0,
+                "depth_corr_treatment_log_libsize": 0.8,
+                "meta_theta_null_mean": 0.4,
+            },
+            {
+                "response_mode": "log_counts",
+                "normalization_mode": "none",
+                "logratio_mode": "none",
+                "depth_covariate_mode": "log_libsize",
+                "include_batch_covariate": False,
+                "frac_signal": 0.0,
+                "depth_corr_treatment_log_libsize": 0.8,
+                "meta_theta_null_mean": 0.05,
+            },
+        ]
+    )
+    df.to_csv(grid_path, sep="\t", index=False)
+
+    cmd = [
+        sys.executable,
+        "scripts/plot_count_depth_confounding_diagnostics.py",
+        "--grid-tsv",
+        str(grid_path),
+        "--out-dir",
+        str(out_dir),
+        "--prefixes",
+        "meta",
+    ]
+    subprocess.run(cmd, check=True, cwd=str(repo_root), capture_output=True, text=True)
+
+    pngs = sorted(out_dir.glob("*.png"))
+    assert pngs
+    assert all(p.stat().st_size > 0 for p in pngs)
+
+
+def test_plot_benchmark_method_agreement_smoke(tmp_path):
+    pytest.importorskip("matplotlib")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    run_dir = tmp_path / "run"
+    out_dir = tmp_path / "out"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    truth = pd.DataFrame(
+        {
+            "gene_id": [f"gene_{i:03d}" for i in range(6)],
+            "is_signal": [False, False, False, False, True, True],
+            "theta_true": [0.0, 0.0, 0.0, 0.0, 1.0, -1.0],
+        }
+    )
+    truth.to_csv(run_dir / "sim_truth_gene.tsv", sep="\t", index=False)
+    (run_dir / "benchmark_report.json").write_text('{"config":{"fdr_q":0.1,"alpha":0.05}}', encoding="utf-8")
+
+    meta = pd.DataFrame(
+        {
+            "gene_id": truth["gene_id"],
+            "focal_var": ["treatment"] * truth.shape[0],
+            "theta": [0.0] * truth.shape[0],
+            "p": [0.5, 0.6, 0.4, 0.3, 1e-6, 1e-4],
+            "p_adj": [0.6, 0.6, 0.6, 0.6, 1e-5, 5e-4],
+        }
+    )
+    meta.to_csv(run_dir / "PMD_std_res_gene_meta.tsv", sep="\t", index=False)
+
+    lmm = pd.DataFrame(
+        {
+            "gene_id": truth["gene_id"],
+            "focal_var": ["treatment"] * truth.shape[0],
+            "theta": [0.0] * truth.shape[0],
+            "lrt_p": [0.5, 0.5, 0.5, 0.5, 1e-7, 1e-3],
+            "lrt_p_adj": [0.6, 0.6, 0.6, 0.6, 1e-6, 1e-2],
+            "wald_p": [0.5, 0.5, 0.5, 0.5, 1e-6, 1e-2],
+            "wald_p_adj": [0.6, 0.6, 0.6, 0.6, 1e-5, 5e-2],
+        }
+    )
+    lmm.to_csv(run_dir / "PMD_std_res_gene_lmm.tsv", sep="\t", index=False)
+
+    cmd = [
+        sys.executable,
+        "scripts/plot_benchmark_method_agreement.py",
+        "--run-dir",
+        str(run_dir),
+        "--out-dir",
+        str(out_dir),
+        "--focal-var",
+        "treatment",
+    ]
+    subprocess.run(cmd, check=True, cwd=str(repo_root), capture_output=True, text=True)
+
+    assert (out_dir / "method_pair_agreement.tsv").is_file()
+    pngs = sorted(out_dir.glob("*.png"))
+    assert pngs
+    assert all(p.stat().st_size > 0 for p in pngs)

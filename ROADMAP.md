@@ -372,18 +372,18 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] circle size: performance rank within each metric; color: best→worst with a single legend
   - [x] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
   - [x] include an additional “signal-only estimation” scorecard for theta metrics (meta/LMM only)
-- [ ] Grid heatmaps (faceted by method/response):
+- [x] Grid heatmaps (faceted by method/response):
   - [x] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier` (via `scripts/plot_count_depth_grid_heatmaps.py`)
   - [x] FDR at q vs same axes (via `scripts/plot_count_depth_grid_heatmaps.py`)
 - [x] Power vs realism knobs:
   - [x] TPR at q vs `effect_sd` (one curve per method/response/depth-handling; via `scripts/plot_count_depth_grid_summary.py`)
 - [x] Pareto front plots:
   - [x] runtime vs TPR at q (color by achieved FDR; via `scripts/plot_count_depth_scorecards.py`)
-- [ ] Agreement/disagreement plots on the *same simulated truth*:
-  - [ ] method-vs-method scatter of `-log10(p)` (never mixing LRT/Wald)
-  - [ ] confusion matrices at q for method pairs
-- [ ] “Depth confounding” diagnostics:
-  - [ ] estimated treatment effect vs simulated depth proxy correlation (shows residual confounding patterns)
+- [x] Agreement/disagreement plots on the *same simulated truth*:
+  - [x] method-vs-method scatter of `-log10(p)` (never mixing LRT/Wald; via `scripts/plot_benchmark_method_agreement.py`)
+  - [x] confusion matrices at q for method pairs (via `scripts/plot_benchmark_method_agreement.py`)
+- [x] “Depth confounding” diagnostics:
+  - [x] estimated treatment effect vs simulated depth proxy correlation (via `scripts/plot_count_depth_confounding_diagnostics.py`)
 
 #### P4.7 — Reporting + Reproducibility
 - [ ] Standardize output directory naming to encode the benchmark pipeline (response + normalization + depth mode) without ambiguity.
