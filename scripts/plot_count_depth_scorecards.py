@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,14 @@ def _rank(values: pd.Series, *, direction: str) -> pd.Series:
     # Best rank = 1.0
     r = v.rank(ascending=ascending, method="average")
     return r
+
+
+def _savefig(fig, out_path: str) -> None:
+    # `tight_layout()` can fail for long tick labels; `bbox_inches="tight"` ensures nothing is cut off.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, message=r"^Tight layout not applied\..*")
+        fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.1)
 
 
 def _dot_scorecard(
@@ -101,8 +110,7 @@ def _dot_scorecard(
 
     cbar = fig.colorbar(sc, ax=ax, shrink=0.8, pad=0.02)
     cbar.set_label("Rank (best→worst)")
-    fig.tight_layout()
-    fig.savefig(out_path)
+    _savefig(fig, out_path)
     plt.close(fig)
 
     return data
@@ -217,8 +225,7 @@ def _method_grid_avg_rank(
     ax.invert_yaxis()
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
     cbar.set_label("Average rank (lower is better)")
-    fig.tight_layout()
-    fig.savefig(out_path)
+    _savefig(fig, out_path)
     plt.close(fig)
 
     return pd.DataFrame(out_rows)
@@ -259,8 +266,7 @@ def _plot_pareto_runtime_vs_tpr(
     ax.grid(True, lw=0.5, alpha=0.3)
     cbar = fig.colorbar(sc, ax=ax, shrink=0.85, pad=0.02)
     cbar.set_label("FDR excess over q (lower is better)")
-    fig.tight_layout()
-    fig.savefig(out_path)
+    _savefig(fig, out_path)
     plt.close(fig)
 
 
