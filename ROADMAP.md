@@ -340,23 +340,23 @@ Goal: evaluate methods × response constructions × depth handling without mixin
 #### P4.5 — Performance Metrics (beyond calibration)
 Goal: quantify correctness along multiple axes, not just FDR.
 
-- [ ] Count realism / QC (pre-inference):
+- [x] Count realism / QC (pre-inference):
   - [x] mean–variance and mean–dispersion diagnostics (per-guide; writes `sim_counts_mean_dispersion.tsv`)
   - [x] mean–variance and mean–dispersion diagnostics (per-gene; writes `sim_counts_gene_mean_dispersion.tsv`)
   - [x] depth-proxy diagnostics: `log_libsize` distribution + correlation with treatment/batch
-- [ ] Calibration (null):
+- [x] Calibration (null):
   - [x] QQ + `lambda_gc` (recorded numerically by default; optional QQ plot PNGs)
   - [x] KS distance vs Uniform(0,1) (recorded numerically)
   - [x] p-histograms (recorded in `benchmark_report.json` under `*_p_hist_null`; plotted via `scripts/plot_count_depth_p_histograms.py`)
-- [ ] Detection (signal):
+- [x] Detection (signal):
   - [x] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
   - [x] power curves vs effect size (`effect_sd`) at fixed FDR q (via `scripts/plot_count_depth_grid_summary.py`)
-- [ ] Estimation quality:
+- [x] Estimation quality:
   - [x] correlation and RMSE of `theta_hat` vs `theta_true` (meta/LMM)
   - [x] sign accuracy vs `theta_true` (signal genes)
-- [ ] Robustness/heterogeneity diagnostics:
+- [x] Robustness/heterogeneity diagnostics:
   - [x] relationship between estimated `tau` (meta/LMM) and simulated guide heterogeneity (`theta_dev_sd` per gene from `sim_truth_guide.tsv`)
-- [ ] Runtime scaling:
+- [x] Runtime scaling:
   - [x] record per-method runtime per run in `benchmark_report.json` and `count_depth_grid_summary.tsv`
   - [x] runtime vs `n_genes` × `guides_per_gene` × sample size; plus “success/failure fractions” for Plan A (grid supports sweeps; plots via `scripts/plot_count_depth_grid_summary.py`).
 
