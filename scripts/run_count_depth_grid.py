@@ -244,6 +244,8 @@ def main() -> None:
     ):
         lmm_max_genes_opt = None if int(lmm_max_genes) == 0 else int(lmm_max_genes)
         cap_tag = 0 if lmm_max_genes_opt is None else int(lmm_max_genes_opt)
+        depth_tag = "logls" if bool(include_depth) else "none"
+        batch_tag = int(bool(include_batch))
 
         full_cfg = {
             "seed": seed,
@@ -290,6 +292,8 @@ def main() -> None:
             f"__rm={args.response_mode}"
             f"__norm={normalization_mode}"
             f"__lr={logratio_mode}"
+            f"__dc={depth_tag}"
+            f"__bc={batch_tag}"
             f"__ng={n_genes}"
             f"__gpg={int(guides_per_gene)}"
             f"__ns={int(n_control)+int(n_treatment)}"
