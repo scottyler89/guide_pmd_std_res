@@ -340,6 +340,15 @@ def _extract_long(df: pd.DataFrame) -> pd.DataFrame:
             out["roc_auc"] = row.get(f"{prefix}_roc_auc", np.nan)
             out["average_precision"] = row.get(f"{prefix}_average_precision", np.nan)
 
+            out["alpha_accuracy"] = row.get(f"{prefix}_alpha_accuracy", np.nan)
+            out["alpha_balanced_accuracy"] = row.get(f"{prefix}_alpha_balanced_accuracy", np.nan)
+            out["alpha_mcc"] = row.get(f"{prefix}_alpha_mcc", np.nan)
+            out["alpha_f1"] = row.get(f"{prefix}_alpha_f1", np.nan)
+            out["q_accuracy"] = row.get(f"{prefix}_q_accuracy", np.nan)
+            out["q_balanced_accuracy"] = row.get(f"{prefix}_q_balanced_accuracy", np.nan)
+            out["q_mcc"] = row.get(f"{prefix}_q_mcc", np.nan)
+            out["q_f1"] = row.get(f"{prefix}_q_f1", np.nan)
+
             if method in {"meta", "lmm_lrt", "lmm_wald"}:
                 out["theta_rmse_signal"] = row.get(f"{prefix}_theta_rmse_signal", np.nan)
                 out["theta_corr_signal"] = row.get(f"{prefix}_theta_corr_signal", np.nan)
@@ -446,6 +455,40 @@ def main() -> None:
             fdr_q=float(fdr_q),
         )
         plots_made += 1
+
+    # Confusion-matrix scorecard: signal runs only (quadrant-derived metrics + runtime).
+    if not sig_df.empty:
+        conf_df = sig_df.copy()
+        conf_df["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(conf_df["q_fdr"], errors="coerce") - fdr_q)
+        conf_agg = conf_df.groupby("pipeline", dropna=False).mean(numeric_only=True).reset_index()
+        conf_specs = [
+            MetricSpec("q_fdr_excess", "lower"),
+            MetricSpec("q_balanced_accuracy", "higher"),
+            MetricSpec("q_mcc", "higher"),
+            MetricSpec("q_f1", "higher"),
+            MetricSpec("runtime_sec", "lower"),
+        ]
+        # Only plot if at least one confusion-derived metric is finite anywhere.
+        has_any = False
+        for c in ["q_balanced_accuracy", "q_mcc", "q_f1"]:
+            if c not in conf_agg.columns:
+                continue
+            v = pd.to_numeric(conf_agg[c], errors="coerce")
+            if bool(np.isfinite(v.to_numpy(dtype=float)).any()):
+                has_any = True
+                break
+        if has_any:
+            conf_ranked = _dot_scorecard(
+                conf_agg,
+                pipeline_col="pipeline",
+                metric_specs=conf_specs,
+                out_path=os.path.join(args.out_dir, "scorecard_signal_confusion.png"),
+                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime",
+            )
+            if int(args.max_pipelines) > 0:
+                conf_ranked = conf_ranked.head(int(args.max_pipelines))
+            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_confusion.tsv"), conf_ranked)
+            plots_made += 1
 
     # Estimation scorecard: only pipelines with theta metrics.
     if not sig_df.empty:
