@@ -109,10 +109,15 @@ def _dot_scorecard(
 
 
 def _method_families(long_df: pd.DataFrame) -> dict[str, pd.Series]:
+    def _series_or_constant(col: str, default: float) -> pd.Series:
+        if col in long_df.columns:
+            return long_df[col]
+        return pd.Series([default] * long_df.shape[0], index=long_df.index, dtype=float)
+
     frac_signal = pd.to_numeric(long_df["frac_signal"], errors="coerce").fillna(0.0)
-    tdm = pd.to_numeric(long_df.get("treatment_depth_multiplier", 1.0), errors="coerce").fillna(1.0)
-    ot = pd.to_numeric(long_df.get("offtarget_guide_frac", 0.0), errors="coerce").fillna(0.0)
-    nb = pd.to_numeric(long_df.get("nb_overdispersion", 0.0), errors="coerce").fillna(0.0)
+    tdm = pd.to_numeric(_series_or_constant("treatment_depth_multiplier", 1.0), errors="coerce").fillna(1.0)
+    ot = pd.to_numeric(_series_or_constant("offtarget_guide_frac", 0.0), errors="coerce").fillna(0.0)
+    nb = pd.to_numeric(_series_or_constant("nb_overdispersion", 0.0), errors="coerce").fillna(0.0)
 
     return {
         "null": frac_signal == 0.0,
