@@ -49,7 +49,7 @@ Back-compat notes:
 - [x] Add `CHANGELOG.md`.
 - [x] Tag releases aligned to versions (`v0.1.5`).
 
-### P3 — Statistical Add-On (Gene-Level Aggregation)
+### P3 — Gene-Level Aggregation (Complementary Statistics)
 Primary objective: add gene-level inference that **complements** (and never replaces) guide-level results.
 
 Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
@@ -77,7 +77,7 @@ Reference spec: `docs/plans/gene_level_aggregation_plan.md`.
 - [x] Define a canonical long-table layout for modeling: `gene_id, guide_id, sample_id, y, (X...)`.
 - [x] Validate invariants: sample ordering, missing samples in model matrix, missing annotation fields, duplicates.
 
-#### P3.2 — Data Plumbing (from current pipeline to add-on inputs)
+#### P3.2 — Data Plumbing (from current pipeline to gene-level inputs)
 - [x] Implement conversion from wide standardized residuals (`std_res`) to long-form (gene/guide/sample rows).
 - [x] Add validation utilities:
   - [x] check that model-matrix rows match `std_res` columns (and align/reindex deterministically)
@@ -193,7 +193,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
   - [x] optional: `PMD_std_res_gene_mixture.tsv`, `PMD_std_res_gene_mixture_guides.tsv`
   - [x] optional: `PMD_std_res_gene_tmeta.tsv`, `PMD_std_res_gene_tmeta_guides.tsv`
 
-#### P3.6 — Figures (Add-on only)
+#### P3.6 — Figures (Gene-level only)
 - [x] Volcano plot per focal var (Plan A and Plan B; consistent axes + labeling).
 - [x] Stouffer volcano and p-value comparisons vs Plan B (never conflates effect sizes).
 - [x] Plan A vs Plan B comparison scatter (effect size and -log10 p).
@@ -233,7 +233,7 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 #### P3.10 — Docs + Release
 - [x] Add docs page describing Plans A/B/C, the rubric, and output file schemas.
 - [x] Update `README.md` with gene-level usage examples.
-- [ ] Version + changelog entry + tag once add-on ships.
+- [ ] Version + changelog entry + tag once this ships.
 
 ---
 
