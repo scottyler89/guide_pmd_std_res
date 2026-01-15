@@ -342,7 +342,7 @@ Goal: quantify correctness along multiple axes, not just FDR.
 
 - [ ] Count realism / QC (pre-inference):
   - [x] mean–variance and mean–dispersion diagnostics (per-guide; writes `sim_counts_mean_dispersion.tsv`)
-  - [ ] mean–variance and mean–dispersion diagnostics (per-gene; optional)
+  - [x] mean–variance and mean–dispersion diagnostics (per-gene; writes `sim_counts_gene_mean_dispersion.tsv`)
   - [x] depth-proxy diagnostics: `log_libsize` distribution + correlation with treatment/batch
 - [ ] Calibration (null):
   - [x] QQ + `lambda_gc` (recorded numerically by default; optional QQ plot PNGs)
@@ -358,7 +358,7 @@ Goal: quantify correctness along multiple axes, not just FDR.
   - [x] relationship between estimated `tau` (meta/LMM) and simulated guide heterogeneity (`theta_dev_sd` per gene from `sim_truth_guide.tsv`)
 - [ ] Runtime scaling:
   - [x] record per-method runtime per run in `benchmark_report.json` and `count_depth_grid_summary.tsv`
-  - [ ] runtime vs `n_genes` × `guides_per_gene` × sample size; plus “success/failure fractions” for Plan A.
+  - [x] runtime vs `n_genes` × `guides_per_gene` × sample size; plus “success/failure fractions” for Plan A (grid supports sweeps; plots via `scripts/plot_count_depth_grid_summary.py`).
 
 #### P4.6 — Visualization Suite (for the full grid)
 Goal: a small set of figures that makes tradeoffs obvious to a reader.
