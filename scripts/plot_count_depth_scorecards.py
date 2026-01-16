@@ -160,23 +160,150 @@ def _dot_scorecard(
 
 
 def _method_families(long_df: pd.DataFrame) -> dict[str, pd.Series]:
-    def _series_or_constant(col: str, default: float) -> pd.Series:
-        if col in long_df.columns:
-            return long_df[col]
-        return pd.Series([default] * long_df.shape[0], index=long_df.index, dtype=float)
+    # Used only for the high-level null-vs-signal scorecards. Method-grid figures should not
+    # aggregate across heterogeneous scenarios.
+    frac_signal = pd.to_numeric(long_df.get("frac_signal", 0.0), errors="coerce").fillna(0.0)
+    return {"null": frac_signal == 0.0, "signal": frac_signal > 0.0}
 
-    frac_signal = pd.to_numeric(long_df["frac_signal"], errors="coerce").fillna(0.0)
-    tdm = pd.to_numeric(_series_or_constant("treatment_depth_multiplier", 1.0), errors="coerce").fillna(1.0)
-    ot = pd.to_numeric(_series_or_constant("offtarget_guide_frac", 0.0), errors="coerce").fillna(0.0)
-    nb = pd.to_numeric(_series_or_constant("nb_overdispersion", 0.0), errors="coerce").fillna(0.0)
 
-    return {
-        "null": frac_signal == 0.0,
-        "signal": frac_signal > 0.0,
-        "signal_depth_confounded": (frac_signal > 0.0) & (tdm != 1.0),
-        "signal_offtarget": (frac_signal > 0.0) & (ot > 0.0),
-        "signal_overdispersed": (frac_signal > 0.0) & (nb > 0.0),
+def _scenario_table(long_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a scenario table (one row per unique simulated scenario), with a stable label.
+
+    A "scenario" is defined only by simulation/design knobs (not analysis pipeline knobs).
+    The label includes only knobs that vary in the provided long_df, to avoid conflating
+    distinct scenarios while keeping column names readable.
+    """
+
+    # These are the simulation/design knobs present in count_depth_grid_summary.tsv.
+    candidate_cols = [
+        "n_genes",
+        "guides_per_gene",
+        "n_control",
+        "n_treatment",
+        "depth_log_sd",
+        "n_batches",
+        "batch_confounding_strength",
+        "batch_depth_log_sd",
+        "treatment_depth_multiplier",
+        "frac_signal",
+        "effect_sd",
+        "guide_slope_sd",
+        "guide_lambda_log_sd",
+        "gene_lambda_log_sd",
+        "offtarget_guide_frac",
+        "offtarget_slope_sd",
+        "nb_overdispersion",
+    ]
+    scenario_cols = [c for c in candidate_cols if c in long_df.columns]
+    if not scenario_cols:
+        out = pd.DataFrame({"scenario": ["scenario"]})
+        out["is_null"] = False
+        return out
+
+    # Include only columns that vary across the provided data, except where needed for basic typing.
+    varying: list[str] = []
+    for c in scenario_cols:
+        s = pd.to_numeric(long_df[c], errors="coerce") if c != "frac_signal" else pd.to_numeric(long_df[c], errors="coerce")
+        if int(s.dropna().nunique()) > 1:
+            varying.append(c)
+
+    def _fmt_num(x: object) -> str:
+        v = pd.to_numeric(pd.Series([x]), errors="coerce").iloc[0]
+        if not np.isfinite(v):
+            return "NA"
+        if float(v).is_integer():
+            return str(int(v))
+        return f"{float(v):g}"
+
+    aliases = {
+        "n_genes": "ng",
+        "guides_per_gene": "gpg",
+        "n_control": "n_ctrl",
+        "n_treatment": "n_trt",
+        "depth_log_sd": "depth_sd",
+        "n_batches": "batches",
+        "batch_confounding_strength": "batch_conf",
+        "batch_depth_log_sd": "batch_depth_sd",
+        "treatment_depth_multiplier": "tdm",
+        "frac_signal": "fs",
+        "effect_sd": "eff_sd",
+        "guide_slope_sd": "guide_slope_sd",
+        "guide_lambda_log_sd": "guide_ll_sd",
+        "gene_lambda_log_sd": "gene_ll_sd",
+        "offtarget_guide_frac": "ot_frac",
+        "offtarget_slope_sd": "ot_sd",
+        "nb_overdispersion": "nb_phi",
     }
+
+    scenarios = long_df[scenario_cols].drop_duplicates().copy()
+    for c in scenario_cols:
+        scenarios[c] = pd.to_numeric(scenarios[c], errors="coerce")
+
+    # Stable ordering by the raw scenario parameters.
+    sort_cols = [c for c in candidate_cols if c in scenarios.columns]
+    scenarios = scenarios.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+    fs = pd.to_numeric(scenarios.get("frac_signal", 0.0), errors="coerce").fillna(0.0)
+    scenarios["is_null"] = fs == 0.0
+
+    fs_nonzero_unique = pd.to_numeric(scenarios.loc[~scenarios["is_null"], "frac_signal"], errors="coerce").dropna().unique()
+    include_fs = int(pd.to_numeric(scenarios.get("frac_signal", 0.0), errors="coerce").dropna().nunique()) > 2 or int(
+        len(fs_nonzero_unique)
+    ) > 1
+
+    varying_for_label = [c for c in varying if c in aliases and (c != "frac_signal" or include_fs)]
+
+    labels: list[str] = []
+    for r in scenarios.itertuples(index=False):
+        row = pd.Series(r._asdict())
+        base = "null" if bool(row.get("is_null")) else "signal"
+        parts = [base]
+        baseline = {
+            "treatment_depth_multiplier": 1.0,
+            "n_batches": 1.0,
+            "batch_confounding_strength": 0.0,
+            "batch_depth_log_sd": 0.0,
+            "offtarget_guide_frac": 0.0,
+            "offtarget_slope_sd": 0.0,
+            "nb_overdispersion": 0.0,
+        }
+        n_batches = pd.to_numeric(row.get("n_batches", np.nan), errors="coerce")
+        n_batches = float(n_batches) if np.isfinite(n_batches) else np.nan
+        ot_frac = pd.to_numeric(row.get("offtarget_guide_frac", np.nan), errors="coerce")
+        ot_frac = float(ot_frac) if np.isfinite(ot_frac) else np.nan
+        for c in varying_for_label:
+            val = row.get(c)
+            # Skip baseline / irrelevant knobs for readability while keeping scenarios distinct.
+            if c in baseline:
+                v = pd.to_numeric(val, errors="coerce")
+                v = float(v) if np.isfinite(v) else np.nan
+                if np.isfinite(v) and np.isfinite(float(baseline[c])) and v == float(baseline[c]):
+                    continue
+            if c in {"batch_confounding_strength", "batch_depth_log_sd"} and (not np.isfinite(n_batches) or n_batches <= 1):
+                continue
+            if c == "offtarget_slope_sd" and (not np.isfinite(ot_frac) or ot_frac <= 0.0):
+                continue
+            parts.append(f"{aliases[c]}={_fmt_num(val)}")
+        labels.append("; ".join(parts))
+    scenarios["scenario"] = labels
+
+    # Ensure scenario labels are unique (avoid ambiguous column names in heatmaps/TSVs).
+    if bool(scenarios["scenario"].duplicated().any()):
+        import hashlib
+        import json
+
+        def _row_hash(s: pd.Series) -> str:
+            payload = {c: s.get(c) for c in scenario_cols}
+            b = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            return hashlib.sha1(b).hexdigest()[:8]
+
+        dup = scenarios["scenario"].duplicated(keep=False)
+        scenarios.loc[dup, "scenario"] = scenarios.loc[dup].apply(
+            lambda r: f"{r['scenario']} [id={_row_hash(r)}]",
+            axis=1,
+        )
+    return scenarios[scenario_cols + ["is_null", "scenario"]]
 
 
 def _method_grid_avg_rank(
@@ -189,12 +316,10 @@ def _method_grid_avg_rank(
 ) -> pd.DataFrame:
     plt = _require_matplotlib()
 
-    families = _method_families(long_df)
-
     if sort_mode not in {"avg", "worst"}:
         raise ValueError("sort_mode must be one of: avg, worst")
 
-    # Metrics that are broadly comparable across method pipelines (scenario families).
+    # Metrics to compare across pipelines; computed per scenario (no cross-scenario pooling).
     alpha = float(pd.to_numeric(long_df.get("alpha", 0.05), errors="coerce").dropna().iloc[0]) if "alpha" in long_df.columns else 0.05
     fdr_q = float(pd.to_numeric(long_df.get("fdr_q", 0.1), errors="coerce").dropna().iloc[0]) if "fdr_q" in long_df.columns else 0.1
 
@@ -203,39 +328,40 @@ def _method_grid_avg_rank(
     tmp["alpha_fpr_dev"] = np.abs(pd.to_numeric(tmp.get("alpha_fpr", np.nan), errors="coerce") - alpha)
     tmp["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(tmp.get("q_fdr", np.nan), errors="coerce") - fdr_q)
 
-    scenario_metric_specs: list[tuple[str, MetricSpec, str]] = [
-        ("null", MetricSpec("null_lambda_gc_dev", "lower"), "null | lambda_gc_dev"),
-        ("null", MetricSpec("alpha_fpr_dev", "lower"), "null | alpha_fpr_dev"),
-        ("null", MetricSpec("null_ks", "lower"), "null | ks"),
-        ("signal", MetricSpec("q_fdr_excess", "lower"), "signal | q_fdr_excess"),
-        ("signal", MetricSpec("q_tpr", "higher"), "signal | q_tpr"),
-        ("signal", MetricSpec("q_balanced_accuracy", "higher"), "signal | q_balanced_accuracy"),
-        ("signal", MetricSpec("q_mcc", "higher"), "signal | q_mcc"),
-        ("signal", MetricSpec("roc_auc", "higher"), "signal | roc_auc"),
-        ("signal", MetricSpec("average_precision", "higher"), "signal | average_precision"),
-        ("signal_depth_confounded", MetricSpec("q_fdr_excess", "lower"), "depth_confounded | q_fdr_excess"),
-        ("signal_depth_confounded", MetricSpec("q_tpr", "higher"), "depth_confounded | q_tpr"),
-        ("signal_depth_confounded", MetricSpec("q_balanced_accuracy", "higher"), "depth_confounded | q_balanced_accuracy"),
-        ("signal_depth_confounded", MetricSpec("q_mcc", "higher"), "depth_confounded | q_mcc"),
-        ("signal_offtarget", MetricSpec("q_fdr_excess", "lower"), "offtarget | q_fdr_excess"),
-        ("signal_offtarget", MetricSpec("q_tpr", "higher"), "offtarget | q_tpr"),
-        ("signal_offtarget", MetricSpec("q_balanced_accuracy", "higher"), "offtarget | q_balanced_accuracy"),
-        ("signal_offtarget", MetricSpec("q_mcc", "higher"), "offtarget | q_mcc"),
-        ("signal_overdispersed", MetricSpec("q_fdr_excess", "lower"), "overdispersed | q_fdr_excess"),
-        ("signal_overdispersed", MetricSpec("q_tpr", "higher"), "overdispersed | q_tpr"),
-        ("signal_overdispersed", MetricSpec("q_balanced_accuracy", "higher"), "overdispersed | q_balanced_accuracy"),
-        ("signal_overdispersed", MetricSpec("q_mcc", "higher"), "overdispersed | q_mcc"),
-        ("all", MetricSpec("runtime_sec", "lower"), "all | runtime_sec"),
+    scenarios = _scenario_table(tmp)
+    scenario_cols = [c for c in scenarios.columns if c not in {"scenario", "is_null"}]
+    tmp = tmp.merge(scenarios, on=scenario_cols, how="left", validate="many_to_one")
+
+    null_metrics = [
+        (MetricSpec("null_lambda_gc_dev", "lower"), "lambda_gc_dev"),
+        (MetricSpec("alpha_fpr_dev", "lower"), "alpha_fpr_dev"),
+        (MetricSpec("null_ks", "lower"), "ks"),
+        (MetricSpec("runtime_sec", "lower"), "runtime_sec"),
     ]
+    signal_metrics = [
+        (MetricSpec("q_fdr_excess", "lower"), "q_fdr_excess"),
+        (MetricSpec("q_tpr", "higher"), "q_tpr"),
+        (MetricSpec("q_balanced_accuracy", "higher"), "q_balacc"),
+        (MetricSpec("q_mcc", "higher"), "q_mcc"),
+        (MetricSpec("roc_auc", "higher"), "roc_auc"),
+        (MetricSpec("average_precision", "higher"), "pr_auc"),
+        (MetricSpec("runtime_sec", "lower"), "runtime_sec"),
+    ]
+
+    scenario_metric_specs: list[tuple[str, MetricSpec, str]] = []
+    for s in scenarios.itertuples(index=False):
+        label = str(getattr(s, "scenario"))
+        is_null = bool(getattr(s, "is_null"))
+        metrics = null_metrics if is_null else signal_metrics
+        for spec, short_name in metrics:
+            scenario_metric_specs.append((label, spec, f"{label} | {short_name}"))
 
     pipelines = sorted(tmp[pipeline_col].dropna().astype(str).unique().tolist())
     cols = [label for _fam, _spec, label in scenario_metric_specs]
 
     grid = pd.DataFrame({pipeline_col: pipelines})
-    for fam, spec, label in scenario_metric_specs:
-        if fam != "all" and fam not in families:
-            raise ValueError(f"unknown family: {fam}")
-        fam_df = tmp if fam == "all" else tmp.loc[families[fam]].copy()
+    for scenario_label, spec, label in scenario_metric_specs:
+        fam_df = tmp.loc[tmp["scenario"].astype(str) == str(scenario_label)].copy()
         if fam_df.empty or spec.name not in fam_df.columns:
             grid[f"{label}__value"] = np.nan
             grid[f"{label}__rank"] = np.nan
@@ -341,15 +467,15 @@ def _pipeline_label(row: pd.Series, *, method: str) -> str:
     norm = str(row.get("normalization_mode", ""))
     lr = str(row.get("logratio_mode", ""))
     depth = str(row.get("depth_covariate_mode", ""))
-    batch = int(bool(row.get("include_batch_covariate", False)))
+    batch_cov = int(bool(row.get("include_batch_covariate", False)))
 
-    parts = [method, f"rm={rm}", f"norm={norm}", f"lr={lr}", f"depth={depth}", f"batch={batch}"]
+    parts = [method, f"resp={rm}", f"norm={norm}", f"lr={lr}", f"depthcov={depth}", f"batchcov={batch_cov}"]
     if method.startswith("lmm_"):
         scope = str(row.get("lmm_scope", ""))
         cap = row.get("lmm_max_genes_per_focal_var", None)
         cap_s = "0" if cap in (None, "", 0) else str(int(cap))
         parts.append(f"scope={scope}")
-        parts.append(f"cap={cap_s}")
+        parts.append(f"lmm_cap={cap_s}")
     return " | ".join(parts)
 
 
@@ -357,19 +483,35 @@ def _extract_long(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
 
     base_cols = [
+        # Pipeline knobs
         "response_mode",
         "normalization_mode",
         "logratio_mode",
         "n_reference_genes",
         "depth_covariate_mode",
         "include_batch_covariate",
+        # Scenario knobs (simulation / design)
+        "n_genes",
+        "guides_per_gene",
+        "n_control",
+        "n_treatment",
+        "depth_log_sd",
+        "n_batches",
+        "batch_confounding_strength",
+        "batch_depth_log_sd",
+        "guide_lambda_log_mean",
+        "guide_lambda_log_sd",
+        "gene_lambda_log_sd",
         "alpha",
         "fdr_q",
         "frac_signal",
         "effect_sd",
+        "guide_slope_sd",
         "treatment_depth_multiplier",
         "offtarget_guide_frac",
+        "offtarget_slope_sd",
         "nb_overdispersion",
+        # LMM knobs (pipeline)
         "lmm_scope",
         "lmm_q_meta",
         "lmm_q_het",
