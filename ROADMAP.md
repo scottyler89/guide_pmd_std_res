@@ -351,6 +351,8 @@ Goal: quantify correctness along multiple axes, not just FDR.
 - [x] Detection (signal):
   - [x] ROC-AUC and PR-AUC (using p-values as scores; deterministic)
   - [x] power curves vs effect size (`effect_sd`) at fixed FDR q (via `scripts/plot_count_depth_grid_summary.py`)
+- [x] Confusion-matrix metrics (signal + null, when defined):
+  - [x] record balanced accuracy and MCC alongside TP/FP/TN/FN (stored in `benchmark_report.json` and surfaced into `count_depth_grid_summary.tsv`)
 - [x] Estimation quality:
   - [x] correlation and RMSE of `theta_hat` vs `theta_true` (meta/LMM)
   - [x] sign accuracy vs `theta_true` (signal genes)
@@ -372,6 +374,7 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] circle size: performance rank within each metric; color: best→worst with a single legend
   - [x] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
   - [x] include an additional “signal-only estimation” scorecard for theta metrics (meta/LMM only)
+  - [x] include an additional “signal-only confusion” scorecard (balanced accuracy, MCC, F1; plus FDR excess and runtime)
 - [x] Grid heatmaps (faceted by method/response):
   - [x] null inflation (`lambda_gc`) vs `depth_log_sd` and `treatment_depth_multiplier` (via `scripts/plot_count_depth_grid_heatmaps.py`)
   - [x] FDR at q vs same axes (via `scripts/plot_count_depth_grid_heatmaps.py`)
@@ -391,5 +394,7 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] Convenience runner: `scripts/run_count_depth_benchmark_suite.py` (grid → aggregate → figures).
   - [x] Suite manifest captures invocation, git, environment, and exact sub-commands (`suite_manifest.json`).
   - [x] Friction reducers: `--preset {quick,standard,full}` and `--resume` (reuse existing grid TSV; avoid mixing outputs by accident).
+  - [x] Presets sweep common-sense processing permutations (response mode, normalization mode, log-ratio mode) where applicable; PMD stays normalization/log-ratio-free by construction.
   - [x] Warm-start + parallelism: `scripts/run_count_depth_grid.py --resume --jobs N` (skip completed runs; run multiple configs concurrently).
   - [x] Suite forwards `--resume` to the grid runner and streams subcommand output (background logs show progress).
+  - [x] Add a small QC helper for suite directories (`scripts/qc_count_depth_benchmark_suite.py`) to sanity-check completion + key artifacts.
