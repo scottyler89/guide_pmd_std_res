@@ -360,19 +360,23 @@ def _method_grid_avg_rank(
     cols = [label for _fam, _spec, label in scenario_metric_specs]
 
     grid = pd.DataFrame({pipeline_col: pipelines})
+    out_cols: dict[str, np.ndarray] = {}
     for scenario_label, spec, label in scenario_metric_specs:
         fam_df = tmp.loc[tmp["scenario"].astype(str) == str(scenario_label)].copy()
         if fam_df.empty or spec.name not in fam_df.columns:
-            grid[f"{label}__value"] = np.nan
-            grid[f"{label}__rank"] = np.nan
-            grid[f"{label}__score"] = np.nan
+            out_cols[f"{label}__value"] = np.full(len(pipelines), np.nan, dtype=float)
+            out_cols[f"{label}__rank"] = np.full(len(pipelines), np.nan, dtype=float)
+            out_cols[f"{label}__score"] = np.full(len(pipelines), np.nan, dtype=float)
             continue
         agg = fam_df.groupby(pipeline_col, dropna=False)[spec.name].mean()
         values = pd.to_numeric(agg.reindex(pipelines), errors="coerce")
         r, score = _rank_and_score(values, direction=spec.direction)
-        grid[f"{label}__value"] = values.to_numpy(dtype=float)
-        grid[f"{label}__rank"] = pd.to_numeric(r, errors="coerce").to_numpy(dtype=float)
-        grid[f"{label}__score"] = pd.to_numeric(score, errors="coerce").to_numpy(dtype=float)
+        out_cols[f"{label}__value"] = values.to_numpy(dtype=float)
+        out_cols[f"{label}__rank"] = pd.to_numeric(r, errors="coerce").to_numpy(dtype=float)
+        out_cols[f"{label}__score"] = pd.to_numeric(score, errors="coerce").to_numpy(dtype=float)
+
+    if out_cols:
+        grid = pd.concat([grid, pd.DataFrame(out_cols)], axis=1)
 
     score_cols = [f"{c}__score" for c in cols]
     score_m = grid[score_cols].to_numpy(dtype=float)
