@@ -8,6 +8,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from count_depth_scenarios import make_scenario_table
+
 
 def _require_matplotlib():
     import matplotlib
@@ -166,146 +168,6 @@ def _method_families(long_df: pd.DataFrame) -> dict[str, pd.Series]:
     return {"null": frac_signal == 0.0, "signal": frac_signal > 0.0}
 
 
-def _scenario_table(long_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build a scenario table (one row per unique simulated scenario), with a stable label.
-
-    A "scenario" is defined only by simulation/design knobs (not analysis pipeline knobs).
-    The label includes only knobs that vary in the provided long_df, to avoid conflating
-    distinct scenarios while keeping column names readable.
-    """
-
-    # These are the simulation/design knobs present in count_depth_grid_summary.tsv.
-    candidate_cols = [
-        "n_genes",
-        "guides_per_gene",
-        "n_control",
-        "n_treatment",
-        "depth_log_sd",
-        "n_batches",
-        "batch_confounding_strength",
-        "batch_depth_log_sd",
-        "treatment_depth_multiplier",
-        "frac_signal",
-        "effect_sd",
-        "guide_slope_sd",
-        "guide_lambda_log_sd",
-        "gene_lambda_log_sd",
-        "offtarget_guide_frac",
-        "offtarget_slope_sd",
-        "nb_overdispersion",
-    ]
-    scenario_cols = [c for c in candidate_cols if c in long_df.columns]
-    if not scenario_cols:
-        out = pd.DataFrame({"scenario": ["scenario"]})
-        out["is_null"] = False
-        return out
-
-    # Include only columns that vary across the provided data, except where needed for basic typing.
-    varying: list[str] = []
-    for c in scenario_cols:
-        s = pd.to_numeric(long_df[c], errors="coerce") if c != "frac_signal" else pd.to_numeric(long_df[c], errors="coerce")
-        if int(s.dropna().nunique()) > 1:
-            varying.append(c)
-
-    def _fmt_num(x: object) -> str:
-        v = pd.to_numeric(pd.Series([x]), errors="coerce").iloc[0]
-        if not np.isfinite(v):
-            return "NA"
-        if float(v).is_integer():
-            return str(int(v))
-        return f"{float(v):g}"
-
-    aliases = {
-        "n_genes": "ng",
-        "guides_per_gene": "gpg",
-        "n_control": "n_ctrl",
-        "n_treatment": "n_trt",
-        "depth_log_sd": "depth_sd",
-        "n_batches": "batches",
-        "batch_confounding_strength": "batch_conf",
-        "batch_depth_log_sd": "batch_depth_sd",
-        "treatment_depth_multiplier": "tdm",
-        "frac_signal": "fs",
-        "effect_sd": "eff_sd",
-        "guide_slope_sd": "guide_slope_sd",
-        "guide_lambda_log_sd": "guide_ll_sd",
-        "gene_lambda_log_sd": "gene_ll_sd",
-        "offtarget_guide_frac": "ot_frac",
-        "offtarget_slope_sd": "ot_sd",
-        "nb_overdispersion": "nb_phi",
-    }
-
-    scenarios = long_df[scenario_cols].drop_duplicates().copy()
-    for c in scenario_cols:
-        scenarios[c] = pd.to_numeric(scenarios[c], errors="coerce")
-
-    # Stable ordering by the raw scenario parameters.
-    sort_cols = [c for c in candidate_cols if c in scenarios.columns]
-    scenarios = scenarios.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
-
-    fs = pd.to_numeric(scenarios.get("frac_signal", 0.0), errors="coerce").fillna(0.0)
-    scenarios["is_null"] = fs == 0.0
-
-    fs_nonzero_unique = pd.to_numeric(scenarios.loc[~scenarios["is_null"], "frac_signal"], errors="coerce").dropna().unique()
-    include_fs = int(pd.to_numeric(scenarios.get("frac_signal", 0.0), errors="coerce").dropna().nunique()) > 2 or int(
-        len(fs_nonzero_unique)
-    ) > 1
-
-    varying_for_label = [c for c in varying if c in aliases and (c != "frac_signal" or include_fs)]
-
-    labels: list[str] = []
-    for r in scenarios.itertuples(index=False):
-        row = pd.Series(r._asdict())
-        base = "null" if bool(row.get("is_null")) else "signal"
-        parts = [base]
-        baseline = {
-            "treatment_depth_multiplier": 1.0,
-            "n_batches": 1.0,
-            "batch_confounding_strength": 0.0,
-            "batch_depth_log_sd": 0.0,
-            "offtarget_guide_frac": 0.0,
-            "offtarget_slope_sd": 0.0,
-            "nb_overdispersion": 0.0,
-        }
-        n_batches = pd.to_numeric(row.get("n_batches", np.nan), errors="coerce")
-        n_batches = float(n_batches) if np.isfinite(n_batches) else np.nan
-        ot_frac = pd.to_numeric(row.get("offtarget_guide_frac", np.nan), errors="coerce")
-        ot_frac = float(ot_frac) if np.isfinite(ot_frac) else np.nan
-        for c in varying_for_label:
-            val = row.get(c)
-            # Skip baseline / irrelevant knobs for readability while keeping scenarios distinct.
-            if c in baseline:
-                v = pd.to_numeric(val, errors="coerce")
-                v = float(v) if np.isfinite(v) else np.nan
-                if np.isfinite(v) and np.isfinite(float(baseline[c])) and v == float(baseline[c]):
-                    continue
-            if c in {"batch_confounding_strength", "batch_depth_log_sd"} and (not np.isfinite(n_batches) or n_batches <= 1):
-                continue
-            if c == "offtarget_slope_sd" and (not np.isfinite(ot_frac) or ot_frac <= 0.0):
-                continue
-            parts.append(f"{aliases[c]}={_fmt_num(val)}")
-        labels.append("; ".join(parts))
-    scenarios["scenario"] = labels
-
-    # Ensure scenario labels are unique (avoid ambiguous column names in heatmaps/TSVs).
-    if bool(scenarios["scenario"].duplicated().any()):
-        import hashlib
-        import json
-
-        def _row_hash(s: pd.Series) -> str:
-            payload = {c: s.get(c) for c in scenario_cols}
-            b = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-            return hashlib.sha1(b).hexdigest()[:8]
-
-        dup = scenarios["scenario"].duplicated(keep=False)
-        scenarios.loc[dup, "scenario"] = scenarios.loc[dup].apply(
-            lambda r: f"{r['scenario']} [id={_row_hash(r)}]",
-            axis=1,
-        )
-    return scenarios[scenario_cols + ["is_null", "scenario"]]
-
-
 def _method_grid_avg_rank(
     long_df: pd.DataFrame,
     *,
@@ -328,8 +190,8 @@ def _method_grid_avg_rank(
     tmp["alpha_fpr_dev"] = np.abs(pd.to_numeric(tmp.get("alpha_fpr", np.nan), errors="coerce") - alpha)
     tmp["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(tmp.get("q_fdr", np.nan), errors="coerce") - fdr_q)
 
-    scenarios = _scenario_table(tmp)
-    scenario_cols = [c for c in scenarios.columns if c not in {"scenario", "is_null"}]
+    scenarios = make_scenario_table(tmp)
+    scenario_cols = [c for c in scenarios.columns if c not in {"scenario", "scenario_id", "is_null"}]
     tmp = tmp.merge(scenarios, on=scenario_cols, how="left", validate="many_to_one")
 
     null_metrics = [
