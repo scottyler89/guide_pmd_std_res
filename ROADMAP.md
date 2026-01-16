@@ -402,4 +402,5 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] Presets sweep common-sense processing permutations (response mode, normalization mode, log-ratio mode) where applicable; PMD stays normalization/log-ratio-free by construction.
   - [x] Warm-start + parallelism: `scripts/run_count_depth_grid.py --resume --jobs N` (skip completed runs; run multiple configs concurrently).
   - [x] Suite forwards `--resume` to the grid runner and streams subcommand output (background logs show progress).
-  - [x] Add a small QC helper for suite directories (`scripts/qc_count_depth_benchmark_suite.py`) to sanity-check completion + key artifacts.
+- [x] Add a small QC helper for suite directories (`scripts/qc_count_depth_benchmark_suite.py`) to sanity-check completion + key artifacts.
+- [x] Close benchmark “coverage gaps” for pipeline-vs-scenario comparisons: scenario presets must not hard-disable analysis-pipeline components (depth/batch covariates), and method-grid ranking must prioritize complete-coverage pipelines when gaps exist.

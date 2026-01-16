@@ -346,7 +346,6 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.0",
-                        "--no-include-batch-covariate",
                     ],
                 },
                 {
@@ -368,7 +367,6 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.0",
-                        "--no-include-batch-covariate",
                     ],
                 },
                 {
@@ -392,7 +390,6 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.0",
-                        "--no-include-depth-covariate",
                     ],
                 },
                 {
@@ -416,7 +413,6 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.0",
-                        "--no-include-depth-covariate",
                     ],
                 },
                 {
@@ -436,8 +432,6 @@ def main() -> None:
                         "0.2",
                         "--nb-overdispersion",
                         "0.0",
-                        "--no-include-depth-covariate",
-                        "--no-include-batch-covariate",
                     ],
                 },
                 {
@@ -457,8 +451,6 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.05",
-                        "--no-include-depth-covariate",
-                        "--no-include-batch-covariate",
                     ],
                 },
             ]

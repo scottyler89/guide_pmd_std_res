@@ -251,17 +251,25 @@ def _method_grid_avg_rank(
     score_cols = [f"{c}__score" for c in cols]
     score_m = grid[score_cols].to_numpy(dtype=float)
     with np.errstate(all="ignore"):
+        grid["coverage_n"] = np.sum(np.isfinite(score_m), axis=1).astype(float)
+        grid["coverage_frac"] = (
+            grid["coverage_n"] / float(len(score_cols)) if len(score_cols) > 0 else np.nan
+        )
         grid["avg_score"] = np.nanmean(score_m, axis=1)
         grid["worst_score"] = np.nanmin(score_m, axis=1)
 
     if sort_mode == "avg":
-        grid = grid.sort_values(["avg_score", "worst_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
-            drop=True
-        )
+        grid = grid.sort_values(
+            ["coverage_frac", "avg_score", "worst_score", pipeline_col],
+            ascending=[False, False, False, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
     else:
-        grid = grid.sort_values(["worst_score", "avg_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
-            drop=True
-        )
+        grid = grid.sort_values(
+            ["coverage_frac", "worst_score", "avg_score", pipeline_col],
+            ascending=[False, False, False, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
 
     heat_cols = [*score_cols, "avg_score", "worst_score"]
     mat = grid[heat_cols].to_numpy(dtype=float)
