@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from count_depth_scenarios import attach_scenarios
 from count_depth_scenarios import make_scenario_table
 
 
@@ -46,6 +47,52 @@ def _rank_and_score(values: pd.Series, *, direction: str) -> tuple[pd.Series, pd
         score = 1.0 - (r - 1.0) / max(1.0, float(n - 1))
         score = score.where(v.notna(), np.nan)
     return r, score
+
+
+def _worst_case_across_scenarios(
+    df: pd.DataFrame,
+    *,
+    pipeline_col: str,
+    scenario_col: str,
+    metric_specs: list[MetricSpec],
+) -> pd.DataFrame:
+    """
+    Reduce a long table to one row per pipeline by taking the *worst-case* metric value across scenarios.
+
+    This avoids misleading averages across adversarial scenarios. "Worst-case" is direction-aware:
+      - direction=="lower": worst = max
+      - direction=="higher": worst = min
+    """
+
+    if df.empty:
+        return pd.DataFrame(columns=[pipeline_col, *[m.name for m in metric_specs]])
+
+    needed = {pipeline_col, scenario_col} | {m.name for m in metric_specs}
+    missing = sorted([c for c in needed if c not in df.columns])
+    if missing:
+        raise ValueError(f"missing required column(s): {missing}")
+
+    sub = df[[pipeline_col, scenario_col, *[m.name for m in metric_specs]]].copy()
+    for m in metric_specs:
+        sub[m.name] = pd.to_numeric(sub[m.name], errors="coerce")
+
+    # First aggregate within scenario (e.g., across seeds) to keep scenario as the unit of evaluation.
+    per = sub.groupby([pipeline_col, scenario_col], dropna=False).mean(numeric_only=True).reset_index()
+
+    pipelines = sorted(per[pipeline_col].dropna().astype(str).unique().tolist())
+    out = pd.DataFrame({pipeline_col: pipelines})
+
+    for m in metric_specs:
+        g = per.groupby(pipeline_col, dropna=False)[m.name]
+        if m.direction == "lower":
+            worst = g.max()
+        elif m.direction == "higher":
+            worst = g.min()
+        else:
+            raise ValueError("direction must be 'higher' or 'lower'")
+        out[m.name] = pd.to_numeric(worst.reindex(pipelines), errors="coerce").to_numpy(dtype=float)
+
+    return out
 
 
 def _savefig(fig, out_path: str) -> None:
@@ -240,30 +287,69 @@ def _method_grid_avg_rank(
     if out_cols:
         grid = pd.concat([grid, pd.DataFrame(out_cols)], axis=1)
 
+    is_null_by_scenario = {str(getattr(s, "scenario")): bool(getattr(s, "is_null")) for s in scenarios.itertuples(index=False)}
+    null_cols = [label for scenario_label, _spec, label in scenario_metric_specs if bool(is_null_by_scenario.get(str(scenario_label), False))]
+    signal_cols = [label for scenario_label, _spec, label in scenario_metric_specs if not bool(is_null_by_scenario.get(str(scenario_label), False))]
+
     score_cols = [f"{c}__score" for c in cols]
-    score_m = grid[score_cols].to_numpy(dtype=float)
+    null_score_cols = [f"{c}__score" for c in null_cols]
+    signal_score_cols = [f"{c}__score" for c in signal_cols]
+
+    def _summarize(scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        # Returns: coverage_n, coverage_frac, avg_score, worst_score (with NaNs penalized to 0).
+        n_cols = int(scores.shape[1])
+        if n_cols == 0:
+            nan = np.full(scores.shape[0], np.nan, dtype=float)
+            return nan, nan, nan, nan
+        mask = np.isfinite(scores)
+        cov_n = np.sum(mask, axis=1).astype(float)
+        cov_f = cov_n / float(n_cols)
+        filled = np.where(mask, scores, 0.0)
+        with np.errstate(all="ignore"):
+            avg = np.mean(filled, axis=1).astype(float)
+            worst = np.min(filled, axis=1).astype(float)
+        return cov_n, cov_f, avg, worst
+
+    score_m = grid[score_cols].to_numpy(dtype=float) if score_cols else np.empty((len(pipelines), 0), dtype=float)
+    null_m = grid[null_score_cols].to_numpy(dtype=float) if null_score_cols else np.empty((len(pipelines), 0), dtype=float)
+    sig_m = grid[signal_score_cols].to_numpy(dtype=float) if signal_score_cols else np.empty((len(pipelines), 0), dtype=float)
+
     with np.errstate(all="ignore"):
-        grid["coverage_n"] = np.sum(np.isfinite(score_m), axis=1).astype(float)
-        grid["coverage_frac"] = (
-            grid["coverage_n"] / float(len(score_cols)) if len(score_cols) > 0 else np.nan
-        )
-        grid["avg_score"] = np.nanmean(score_m, axis=1)
-        grid["worst_score"] = np.nanmin(score_m, axis=1)
+        cov_n, cov_f, avg_all, worst_all = _summarize(score_m)
+        cov_n_null, cov_f_null, avg_null, worst_null = _summarize(null_m)
+        cov_n_sig, cov_f_sig, avg_sig, worst_sig = _summarize(sig_m)
+
+        grid["coverage_n"] = cov_n
+        grid["coverage_frac"] = cov_f
+        grid["coverage_n_null"] = cov_n_null
+        grid["coverage_frac_null"] = cov_f_null
+        grid["coverage_n_signal"] = cov_n_sig
+        grid["coverage_frac_signal"] = cov_f_sig
+
+        grid["avg_score_null"] = avg_null
+        grid["worst_score_null"] = worst_null
+        grid["avg_score_signal"] = avg_sig
+        grid["worst_score_signal"] = worst_sig
+
+        # Single-summary columns that do NOT allow null-vs-signal cancellation: use the weaker domain.
+        grid["avg_score_min_domain"] = np.fmin(avg_null, avg_sig)
+        grid["worst_score_min_domain"] = np.fmin(worst_null, worst_sig)
+        grid["coverage_frac_min_domain"] = np.fmin(cov_f_null, cov_f_sig)
 
     if sort_mode == "avg":
         grid = grid.sort_values(
-            ["coverage_frac", "avg_score", "worst_score", pipeline_col],
+            ["coverage_frac_min_domain", "avg_score_min_domain", "worst_score_min_domain", pipeline_col],
             ascending=[False, False, False, True],
             kind="mergesort",
         ).reset_index(drop=True)
     else:
         grid = grid.sort_values(
-            ["coverage_frac", "worst_score", "avg_score", pipeline_col],
+            ["coverage_frac_min_domain", "worst_score_min_domain", "avg_score_min_domain", pipeline_col],
             ascending=[False, False, False, True],
             kind="mergesort",
         ).reset_index(drop=True)
 
-    heat_cols = [*score_cols, "avg_score", "worst_score"]
+    heat_cols = [*score_cols, "avg_score_min_domain", "worst_score_min_domain"]
     mat = grid[heat_cols].to_numpy(dtype=float)
 
     cmap = plt.get_cmap("viridis").copy()
@@ -277,7 +363,7 @@ def _method_grid_avg_rank(
     im = ax.imshow(mat, aspect="auto", interpolation="nearest", cmap=cmap, vmin=0.0, vmax=1.0)
     ax.set_title(title)
     ax.set_xticks(range(len(heat_cols)))
-    ax.set_xticklabels([*cols, "avg", "worst"], rotation=45, ha="right")
+    ax.set_xticklabels([*cols, "avg(min-domain)", "worst(min-domain)"], rotation=45, ha="right")
     ax.set_yticks(range(grid.shape[0]))
     ax.set_yticklabels(grid[pipeline_col].astype(str).tolist(), fontsize=7)
     ax.axvline(len(score_cols) - 0.5, color="black", lw=1.0, alpha=0.25)
@@ -468,29 +554,34 @@ def main() -> None:
     if long_df.empty:
         raise ValueError("no method metrics found in grid TSV (expected meta/stouffer/lmm_* columns)")
 
-    # Aggregate across all runs for each pipeline for each plot's subset.
-    families = _method_families(long_df)
+    # Attach explicit scenario labels (SSoT) so we never average across heterogeneous scenarios by accident.
+    long_df_sc = attach_scenarios(long_df)
     plots_made = 0
 
     # Null scorecard: calibration + runtime (common across methods).
-    alpha = float(pd.to_numeric(long_df.get("alpha", 0.05), errors="coerce").dropna().iloc[0]) if "alpha" in long_df.columns else 0.05
-    null_df = long_df.loc[families["null"]].copy()
+    alpha = float(pd.to_numeric(long_df_sc.get("alpha", 0.05), errors="coerce").dropna().iloc[0]) if "alpha" in long_df_sc.columns else 0.05
+    null_df = long_df_sc.loc[long_df_sc["is_null"].astype(bool)].copy()
     if not null_df.empty:
         null_df["null_lambda_gc_dev"] = np.abs(pd.to_numeric(null_df["null_lambda_gc"], errors="coerce") - 1.0)
         null_df["alpha_fpr_dev"] = np.abs(pd.to_numeric(null_df["alpha_fpr"], errors="coerce") - alpha)
-        null_agg = null_df.groupby("pipeline", dropna=False).mean(numeric_only=True).reset_index()
         null_specs = [
             MetricSpec("null_lambda_gc_dev", "lower"),
             MetricSpec("alpha_fpr_dev", "lower"),
             MetricSpec("null_ks", "lower"),
             MetricSpec("runtime_sec", "lower"),
         ]
+        null_agg = _worst_case_across_scenarios(
+            null_df,
+            pipeline_col="pipeline",
+            scenario_col="scenario_id",
+            metric_specs=null_specs,
+        )
         null_ranked_avg = _dot_scorecard(
             null_agg,
             pipeline_col="pipeline",
             metric_specs=null_specs,
             out_path=os.path.join(args.out_dir, "scorecard_null.png"),
-            title="Benchmark scorecard (null runs) — calibration + runtime (sorted by avg)",
+            title="Benchmark scorecard (null scenarios; worst-case) — calibration + runtime (sorted by avg)",
             sort_mode="avg",
         )
         null_ranked_worst = _dot_scorecard(
@@ -498,7 +589,7 @@ def main() -> None:
             pipeline_col="pipeline",
             metric_specs=null_specs,
             out_path=os.path.join(args.out_dir, "scorecard_null__sort=worst.png"),
-            title="Benchmark scorecard (null runs) — calibration + runtime (sorted by worst)",
+            title="Benchmark scorecard (null scenarios; worst-case) — calibration + runtime (sorted by worst)",
             sort_mode="worst",
         )
         if int(args.max_pipelines) > 0:
@@ -509,11 +600,10 @@ def main() -> None:
         plots_made += 1
 
     # Signal scorecard: detection + runtime (common across methods).
-    fdr_q = float(pd.to_numeric(long_df.get("fdr_q", 0.1), errors="coerce").dropna().iloc[0]) if "fdr_q" in long_df.columns else 0.1
-    sig_df = long_df.loc[families["signal"]].copy()
+    fdr_q = float(pd.to_numeric(long_df_sc.get("fdr_q", 0.1), errors="coerce").dropna().iloc[0]) if "fdr_q" in long_df_sc.columns else 0.1
+    sig_df = long_df_sc.loc[~long_df_sc["is_null"].astype(bool)].copy()
     if not sig_df.empty:
         sig_df["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(sig_df["q_fdr"], errors="coerce") - fdr_q)
-        sig_agg = sig_df.groupby("pipeline", dropna=False).mean(numeric_only=True).reset_index()
         sig_specs = [
             MetricSpec("q_fdr_excess", "lower"),
             MetricSpec("q_tpr", "higher"),
@@ -521,12 +611,18 @@ def main() -> None:
             MetricSpec("average_precision", "higher"),
             MetricSpec("runtime_sec", "lower"),
         ]
+        sig_agg = _worst_case_across_scenarios(
+            sig_df,
+            pipeline_col="pipeline",
+            scenario_col="scenario_id",
+            metric_specs=sig_specs,
+        )
         sig_ranked_avg = _dot_scorecard(
             sig_agg,
             pipeline_col="pipeline",
             metric_specs=sig_specs,
             out_path=os.path.join(args.out_dir, "scorecard_signal.png"),
-            title="Benchmark scorecard (signal runs) — detection + runtime (sorted by avg)",
+            title="Benchmark scorecard (signal scenarios; worst-case) — detection + runtime (sorted by avg)",
             sort_mode="avg",
         )
         sig_ranked_worst = _dot_scorecard(
@@ -534,7 +630,7 @@ def main() -> None:
             pipeline_col="pipeline",
             metric_specs=sig_specs,
             out_path=os.path.join(args.out_dir, "scorecard_signal__sort=worst.png"),
-            title="Benchmark scorecard (signal runs) — detection + runtime (sorted by worst)",
+            title="Benchmark scorecard (signal scenarios; worst-case) — detection + runtime (sorted by worst)",
             sort_mode="worst",
         )
         if int(args.max_pipelines) > 0:
@@ -543,11 +639,22 @@ def main() -> None:
         _write_tsv(os.path.join(args.out_dir, "scorecard_signal.tsv"), sig_ranked_avg)
         _write_tsv(os.path.join(args.out_dir, "scorecard_signal__sort=worst.tsv"), sig_ranked_worst)
         keep = sig_ranked_avg["pipeline"].astype(str).tolist() if (not sig_ranked_avg.empty) else []
-        sig_for_pareto = sig_agg.loc[sig_agg["pipeline"].astype(str).isin(keep)].copy() if keep else sig_agg
+        pareto_specs = [
+            MetricSpec("runtime_sec", "lower"),
+            MetricSpec("q_tpr", "higher"),
+            MetricSpec("q_fdr", "lower"),
+        ]
+        pareto_agg = _worst_case_across_scenarios(
+            sig_df,
+            pipeline_col="pipeline",
+            scenario_col="scenario_id",
+            metric_specs=pareto_specs,
+        )
+        sig_for_pareto = pareto_agg.loc[pareto_agg["pipeline"].astype(str).isin(keep)].copy() if keep else pareto_agg
         _plot_pareto_runtime_vs_tpr(
             sig_for_pareto,
             out_path=os.path.join(args.out_dir, "pareto_runtime_vs_tpr.png"),
-            title="Pareto: runtime vs power (signal runs)",
+            title="Pareto: runtime vs power (signal scenarios; worst-case)",
             fdr_q=float(fdr_q),
         )
         plots_made += 1
@@ -556,7 +663,6 @@ def main() -> None:
     if not sig_df.empty:
         conf_df = sig_df.copy()
         conf_df["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(conf_df["q_fdr"], errors="coerce") - fdr_q)
-        conf_agg = conf_df.groupby("pipeline", dropna=False).mean(numeric_only=True).reset_index()
         conf_specs = [
             MetricSpec("q_fdr_excess", "lower"),
             MetricSpec("q_balanced_accuracy", "higher"),
@@ -564,6 +670,12 @@ def main() -> None:
             MetricSpec("q_f1", "higher"),
             MetricSpec("runtime_sec", "lower"),
         ]
+        conf_agg = _worst_case_across_scenarios(
+            conf_df,
+            pipeline_col="pipeline",
+            scenario_col="scenario_id",
+            metric_specs=conf_specs,
+        )
         # Only plot if at least one confusion-derived metric is finite anywhere.
         has_any = False
         for c in ["q_balanced_accuracy", "q_mcc", "q_f1"]:
@@ -579,7 +691,7 @@ def main() -> None:
                 pipeline_col="pipeline",
                 metric_specs=conf_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_confusion.png"),
-                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime (sorted by avg)",
+                title="Benchmark scorecard (signal scenarios; worst-case) — confusion-matrix metrics + runtime (sorted by avg)",
                 sort_mode="avg",
             )
             conf_ranked_worst = _dot_scorecard(
@@ -587,7 +699,7 @@ def main() -> None:
                 pipeline_col="pipeline",
                 metric_specs=conf_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_confusion__sort=worst.png"),
-                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime (sorted by worst)",
+                title="Benchmark scorecard (signal scenarios; worst-case) — confusion-matrix metrics + runtime (sorted by worst)",
                 sort_mode="worst",
             )
             if int(args.max_pipelines) > 0:
@@ -602,19 +714,24 @@ def main() -> None:
         est_df = sig_df.copy()
         est_df = est_df.loc[est_df["theta_rmse_signal"].notna()].copy()
         if not est_df.empty:
-            est_agg = est_df.groupby("pipeline", dropna=False).mean(numeric_only=True).reset_index()
             est_specs = [
                 MetricSpec("theta_rmse_signal", "lower"),
                 MetricSpec("theta_corr_signal", "higher"),
                 MetricSpec("theta_sign_acc_signal", "higher"),
                 MetricSpec("runtime_sec", "lower"),
             ]
+            est_agg = _worst_case_across_scenarios(
+                est_df,
+                pipeline_col="pipeline",
+                scenario_col="scenario_id",
+                metric_specs=est_specs,
+            )
             est_ranked_avg = _dot_scorecard(
                 est_agg,
                 pipeline_col="pipeline",
                 metric_specs=est_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_estimation.png"),
-                title="Benchmark scorecard (signal runs) — effect estimation (theta) (sorted by avg)",
+                title="Benchmark scorecard (signal scenarios; worst-case) — effect estimation (theta) (sorted by avg)",
                 sort_mode="avg",
             )
             est_ranked_worst = _dot_scorecard(
@@ -622,7 +739,7 @@ def main() -> None:
                 pipeline_col="pipeline",
                 metric_specs=est_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_estimation__sort=worst.png"),
-                title="Benchmark scorecard (signal runs) — effect estimation (theta) (sorted by worst)",
+                title="Benchmark scorecard (signal scenarios; worst-case) — effect estimation (theta) (sorted by worst)",
                 sort_mode="worst",
             )
             if int(args.max_pipelines) > 0:
