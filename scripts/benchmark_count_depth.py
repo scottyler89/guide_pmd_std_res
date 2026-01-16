@@ -557,7 +557,8 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
 
     tpr = (tp / n_signal) if n_signal else None
     fpr = (fp / n_null) if n_null else None
-    fdr = (fp / n_called) if n_called else None
+    # For benchmarking/reporting treat "no calls" as FDR=0 (no discoveries => no false discoveries).
+    fdr = (fp / n_called) if n_called else 0.0
     ppv = (tp / n_called) if n_called else None
 
     tnr = (tn / n_null) if n_null else None
@@ -574,6 +575,10 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
     denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
     if denom > 0:
         mcc = float((tp * tn - fp * fn) / float(np.sqrt(denom)))
+    else:
+        # Degenerate confusion matrices (all-positive or all-negative predictions) have undefined MCC.
+        # For benchmarking treat this as 0.0 (no correlation).
+        mcc = 0.0
 
     return {
         "n_total": n_total,
@@ -793,7 +798,10 @@ def _fdr_summary(p_adj: pd.Series, is_signal: pd.Series, *, q: float) -> dict[st
     called = np.isfinite(p_adj_arr) & (p_adj_arr < float(q))
     n_called = int(np.sum(called))
     if n_called == 0:
-        return {"q": float(q), "n_called": 0.0, "fdr": np.nan, "tpr": np.nan}
+        # For benchmarking and downstream aggregation, treat "no calls" as a valid outcome:
+        #   - achieved FDR is 0 (no discoveries => no false discoveries)
+        #   - achieved TPR is 0 (no signal recovered)
+        return {"q": float(q), "n_called": 0.0, "fdr": 0.0, "tpr": 0.0}
     tp = int(np.sum(called & sig))
     fp = int(np.sum(called & ~sig))
     return {
