@@ -64,7 +64,7 @@ def _row_hash(row: pd.Series, *, scenario_cols: list[str]) -> str:
     return hashlib.sha1(b).hexdigest()[:8]
 
 
-def make_scenario_table(df: pd.DataFrame) -> pd.DataFrame:
+def make_scenario_table(df: pd.DataFrame, *, exclude_cols: list[str] | None = None) -> pd.DataFrame:
     """
     Build a scenario table (one row per unique simulated scenario), with a stable label.
 
@@ -72,7 +72,8 @@ def make_scenario_table(df: pd.DataFrame) -> pd.DataFrame:
     The label includes only knobs that vary in the provided df, to keep names readable.
     """
 
-    scenario_cols = [c for c in SCENARIO_CANDIDATE_COLS if c in df.columns]
+    exclude = set([str(c) for c in (exclude_cols or [])])
+    scenario_cols = [c for c in SCENARIO_CANDIDATE_COLS if (c in df.columns and c not in exclude)]
     if not scenario_cols:
         out = pd.DataFrame({"scenario": ["scenario"], "scenario_id": ["00000000"], "is_null": [False]})
         return out
@@ -153,12 +154,11 @@ def make_scenario_table(df: pd.DataFrame) -> pd.DataFrame:
     return scenarios[scenario_cols + ["scenario_id", "is_null", "scenario"]]
 
 
-def attach_scenarios(df: pd.DataFrame) -> pd.DataFrame:
+def attach_scenarios(df: pd.DataFrame, *, exclude_cols: list[str] | None = None) -> pd.DataFrame:
     """
     Return df with added columns: scenario_id, is_null, scenario.
     """
 
-    scenarios = make_scenario_table(df)
+    scenarios = make_scenario_table(df, exclude_cols=exclude_cols)
     scenario_cols = [c for c in scenarios.columns if c not in {"scenario", "scenario_id", "is_null"}]
     return df.merge(scenarios, on=scenario_cols, how="left", validate="many_to_one")
-

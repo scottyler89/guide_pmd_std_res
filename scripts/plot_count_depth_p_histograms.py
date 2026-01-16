@@ -9,6 +9,8 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
+from count_depth_scenarios import attach_scenarios
+
 
 def _require_matplotlib():
     import matplotlib
@@ -154,14 +156,14 @@ def main() -> None:
         type=str,
         nargs="+",
         default=[
+            "scenario_id",
             "response_mode",
             "normalization_mode",
             "logratio_mode",
             "depth_covariate_mode",
             "include_batch_covariate",
-            "depth_log_sd",
-            "treatment_depth_multiplier",
             "lmm_scope",
+            "lmm_max_genes_per_focal_var",
         ],
         help="Config columns to group reports before aggregating p-hists (default: key pipeline knobs).",
     )
@@ -184,6 +186,9 @@ def main() -> None:
     if "frac_signal" in df.columns and not any(w.startswith("frac_signal=") for w in args.where):
         df = df.loc[pd.to_numeric(df["frac_signal"], errors="coerce").fillna(0.0) == 0.0].copy()
 
+    # Attach explicit scenario IDs so we never aggregate p-hists across heterogeneous simulation conditions.
+    df = attach_scenarios(df)
+
     if df.empty:
         raise ValueError("no rows selected after filtering")
 
@@ -198,7 +203,10 @@ def main() -> None:
         tag = _stable_group_tag(key_values)
         report_paths = sub["report_path"].astype(str).tolist()
 
-        title = "Null p-value histograms\n" + tag
+        scenario_label = ""
+        if "scenario" in sub.columns and int(sub["scenario"].nunique(dropna=False)) == 1:
+            scenario_label = str(sub["scenario"].iloc[0])
+        title = "Null p-value histograms\n" + (scenario_label + "\n" if scenario_label else "") + tag
         out_path = os.path.join(args.out_dir, f"p_hist_null__{tag}.png")
         _plot_group(report_paths, prefixes=[str(p) for p in args.prefixes], out_path=out_path, title=title)
         plots_made += 1
@@ -209,4 +217,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from count_depth_scenarios import attach_scenarios
+
 
 def _require_matplotlib():
     import matplotlib
@@ -55,6 +57,16 @@ def _plot_metric_grid(
     elif axes.ndim == 1:
         axes = axes.reshape((nrows, ncols))
 
+    def _q(p: float):
+        def f(s: pd.Series) -> float:
+            v = pd.to_numeric(s, errors="coerce").to_numpy(dtype=float)
+            v = v[np.isfinite(v)]
+            if v.size == 0:
+                return float("nan")
+            return float(np.quantile(v, float(p)))
+
+        return f
+
     for i, depth_cov in enumerate(depth_vals):
         for j, batch_cov in enumerate(batch_vals):
             ax = axes[i, j]
@@ -70,11 +82,12 @@ def _plot_metric_grid(
 
             agg = (
                 sub.groupby(x_col, dropna=False)[metric_col]
-                .agg(["mean", "count"])
+                .agg(median="median", q25=_q(0.25), q75=_q(0.75), n="count")
                 .reset_index()
                 .sort_values(x_col)
             )
-            ax.plot(agg[x_col], agg["mean"], marker="o", lw=1)
+            ax.plot(agg[x_col], agg["median"], marker="o", lw=1)
+            ax.fill_between(agg[x_col], agg["q25"], agg["q75"], alpha=0.2, linewidth=0.0)
             if hline is not None:
                 ax.axhline(float(hline), color="black", lw=1, alpha=0.5)
 
@@ -152,9 +165,6 @@ def main() -> None:
     df = pd.read_csv(args.grid_tsv, sep="\t")
     os.makedirs(args.out_dir, exist_ok=True)
 
-    null_df = df.loc[df.get("frac_signal", 0.0) == 0.0].copy()
-    sig_df = df.loc[df.get("frac_signal", 0.0) > 0.0].copy()
-
     x_tdm = "treatment_depth_multiplier" if "treatment_depth_multiplier" in df.columns else None
     x_esd = "effect_sd" if "effect_sd" in df.columns else None
     x_ngenes = "n_genes" if "n_genes" in df.columns else None
@@ -164,47 +174,71 @@ def main() -> None:
     plots_made = 0
 
     for prefix in ["meta", "stouffer", "lmm_lrt", "lmm_wald"]:
-        if not null_df.empty and x_tdm is not None:
-            metric = f"{prefix}_null_lambda_gc"
-            if metric in null_df.columns:
-                _plot_metric_grid(
-                    null_df,
-                    metric_col=metric,
-                    x_col=x_tdm,
-                    out_path=os.path.join(args.out_dir, f"null_lambda_gc__{prefix}.png"),
-                    title=f"Null calibration (lambda_gc) — {prefix}",
-                    y_label="lambda_gc",
-                    hline=1.0,
-                )
-                plots_made += 1
+        # Null calibration panels: never pool across distinct simulation scenarios.
+        if x_tdm is not None and "frac_signal" in df.columns:
+            frac = pd.to_numeric(df["frac_signal"], errors="coerce").fillna(0.0)
+            null_df = df.loc[frac == 0.0].copy()
+            if not null_df.empty:
+                null_df = attach_scenarios(null_df, exclude_cols=[x_tdm])
+                group_cols = [c for c in ["scenario_id", "scenario", "response_mode"] if c in null_df.columns]
+                for key, sub in null_df.groupby(group_cols, dropna=False, sort=True):
+                    if not isinstance(key, tuple):
+                        key = (key,)
+                    key_values = {c: v for c, v in zip(group_cols, key)}
+                    tag = f"sc={key_values.get('scenario_id','NA')}__rm={key_values.get('response_mode','NA')}"
 
-            metric = f"{prefix}_alpha_fpr"
-            if metric in null_df.columns:
-                alpha = float(df["alpha"].iloc[0]) if "alpha" in df.columns and not df["alpha"].empty else None
-                _plot_metric_grid(
-                    null_df,
-                    metric_col=metric,
-                    x_col=x_tdm,
-                    out_path=os.path.join(args.out_dir, f"null_fpr_alpha__{prefix}.png"),
-                    title=f"Null FPR at alpha — {prefix}",
-                    y_label="FPR",
-                    hline=alpha,
-                )
-                plots_made += 1
+                    metric = f"{prefix}_null_lambda_gc"
+                    if metric in sub.columns:
+                        _plot_metric_grid(
+                            sub,
+                            metric_col=metric,
+                            x_col=x_tdm,
+                            out_path=os.path.join(args.out_dir, f"null_lambda_gc__{prefix}__{tag}.png"),
+                            title=f"Null calibration (lambda_gc) — {prefix}\n{key_values.get('scenario','')}",
+                            y_label="lambda_gc",
+                            hline=1.0,
+                        )
+                        plots_made += 1
 
-        if not sig_df.empty and x_esd is not None:
-            metric = f"{prefix}_q_tpr"
-            if metric in sig_df.columns:
-                _plot_metric_grid(
-                    sig_df,
-                    metric_col=metric,
-                    x_col=x_esd,
-                    out_path=os.path.join(args.out_dir, f"signal_tpr_fdrq__{prefix}.png"),
-                    title=f"Power (TPR at FDR q) — {prefix}",
-                    y_label="TPR",
-                    hline=None,
-                )
-            plots_made += 1
+                    metric = f"{prefix}_alpha_fpr"
+                    if metric in sub.columns:
+                        alpha = float(df["alpha"].iloc[0]) if "alpha" in df.columns and not df["alpha"].empty else None
+                        _plot_metric_grid(
+                            sub,
+                            metric_col=metric,
+                            x_col=x_tdm,
+                            out_path=os.path.join(args.out_dir, f"null_fpr_alpha__{prefix}__{tag}.png"),
+                            title=f"Null FPR at alpha — {prefix}\n{key_values.get('scenario','')}",
+                            y_label="FPR",
+                            hline=alpha,
+                        )
+                        plots_made += 1
+
+        # Signal power panels: never pool across distinct simulation scenarios.
+        if x_esd is not None and "frac_signal" in df.columns:
+            frac = pd.to_numeric(df["frac_signal"], errors="coerce").fillna(0.0)
+            sig_df = df.loc[frac > 0.0].copy()
+            if not sig_df.empty:
+                sig_df = attach_scenarios(sig_df, exclude_cols=[x_esd])
+                group_cols = [c for c in ["scenario_id", "scenario", "response_mode"] if c in sig_df.columns]
+                for key, sub in sig_df.groupby(group_cols, dropna=False, sort=True):
+                    if not isinstance(key, tuple):
+                        key = (key,)
+                    key_values = {c: v for c, v in zip(group_cols, key)}
+                    tag = f"sc={key_values.get('scenario_id','NA')}__rm={key_values.get('response_mode','NA')}"
+
+                    metric = f"{prefix}_q_tpr"
+                    if metric in sub.columns:
+                        _plot_metric_grid(
+                            sub,
+                            metric_col=metric,
+                            x_col=x_esd,
+                            out_path=os.path.join(args.out_dir, f"signal_tpr_fdrq__{prefix}__{tag}.png"),
+                            title=f"Power (TPR at FDR q) — {prefix}\n{key_values.get('scenario','')}",
+                            y_label="TPR",
+                            hline=None,
+                        )
+                        plots_made += 1
 
     # Simple runtime scaling plots (when present).
     for runtime_col in ["runtime_meta", "runtime_stouffer", "runtime_lmm", "runtime_qc"]:
