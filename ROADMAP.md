@@ -367,12 +367,17 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
 
 - [x] “Method grid” figure (single page, high-level):
   - [x] rows: method pipelines (explicitly separate `lmm_lrt` vs `lmm_wald`; include meta and stouffer; includes CLR/ALR variants when present in the grid)
-  - [x] columns: scenario families (null calibration vs signal; depth confounding; off-target contamination; NB overdispersion)
-  - [x] cells: compact summary via average-rank across family-specific metrics
+  - [x] columns: scenario × metric pairs (e.g., `null | lambda_gc_dev`, `signal | q_tpr`, `depth_confounded | q_mcc`, …)
+  - [x] cells: normalized rank (worst→best) so all metrics share a common 0–1 visual scale
+  - [x] add right-side summary columns: per-pipeline `avg` and `worst` scores across the scenario-metric grid
+  - [x] produce 2 versions: sorted by `avg` score and by `worst` score (worst-case robustness view)
 - [x] Rank scorecard (dot heatmap / circle plot):
   - [x] rows: pipelines; columns: key metrics (FDR@q excess, TPR@q, AUC/PR-AUC, lambda_gc deviation, runtime)
-  - [x] circle size: performance rank within each metric; color: best→worst with a single legend
+  - [x] circle size: normalized rank within each metric; color: worst→best with a single legend
   - [x] produce 2 versions: “null-only” and “signal-only” so calibration vs power is never conflated
+  - [x] add right-side summary panel: `avg` and `worst` dots per pipeline row
+  - [x] produce 2 sorted variants for each scorecard: by `avg` and by `worst`
+  - [x] use tight layout + `bbox_inches="tight"` so long labels are never cut off
   - [x] include an additional “signal-only estimation” scorecard for theta metrics (meta/LMM only)
   - [x] include an additional “signal-only confusion” scorecard (balanced accuracy, MCC, F1; plus FDR excess and runtime)
 - [x] Grid heatmaps (faceted by method/response):

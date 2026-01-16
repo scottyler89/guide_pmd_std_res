@@ -34,6 +34,18 @@ def _rank(values: pd.Series, *, direction: str) -> pd.Series:
     return r
 
 
+def _rank_and_score(values: pd.Series, *, direction: str) -> tuple[pd.Series, pd.Series]:
+    v = pd.to_numeric(values, errors="coerce")
+    r = _rank(v, direction=direction)
+    n = int(v.notna().sum())
+    if n <= 1:
+        score = pd.Series([np.nan] * v.shape[0], index=v.index, dtype=float)
+    else:
+        score = 1.0 - (r - 1.0) / max(1.0, float(n - 1))
+        score = score.where(v.notna(), np.nan)
+    return r, score
+
+
 def _savefig(fig, out_path: str) -> None:
     # `tight_layout()` can fail for long tick labels; `bbox_inches="tight"` ensures nothing is cut off.
     with warnings.catch_warnings():
@@ -49,6 +61,7 @@ def _dot_scorecard(
     metric_specs: list[MetricSpec],
     out_path: str,
     title: str,
+    sort_mode: str,
 ) -> pd.DataFrame:
     plt = _require_matplotlib()
 
@@ -61,19 +74,35 @@ def _dot_scorecard(
     if missing:
         raise ValueError(f"missing required column(s): {missing}")
 
+    if sort_mode not in {"avg", "worst"}:
+        raise ValueError("sort_mode must be one of: avg, worst")
+
     data = df[[pipeline_col, *[m.name for m in metric_specs]]].copy()
     for m in metric_specs:
         data[m.name] = pd.to_numeric(data[m.name], errors="coerce")
 
-    # Rank within metric (best rank=1). Average rank gives a stable ordering for y-axis.
+    # Rank within metric (best rank=1). Score is normalized rank in [0,1] (worst→best).
     for m in metric_specs:
-        data[f"{m.name}__rank"] = _rank(data[m.name], direction=m.direction)
-    rank_cols = [f"{m.name}__rank" for m in metric_specs]
-    data["avg_rank"] = data[rank_cols].mean(axis=1, skipna=True)
-    data = data.sort_values(["avg_rank", pipeline_col], kind="mergesort").reset_index(drop=True)
+        r, s = _rank_and_score(data[m.name], direction=m.direction)
+        data[f"{m.name}__rank"] = r
+        data[f"{m.name}__score"] = s
+
+    score_cols = [f"{m.name}__score" for m in metric_specs]
+    data["avg_score"] = data[score_cols].mean(axis=1, skipna=True)
+    data["worst_score"] = data[score_cols].min(axis=1, skipna=True)
+
+    if sort_mode == "avg":
+        data = data.sort_values(["avg_score", "worst_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
+            drop=True
+        )
+    else:
+        data = data.sort_values(["worst_score", "avg_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
+            drop=True
+        )
 
     pipelines = data[pipeline_col].astype(str).tolist()
     metrics = [m.name for m in metric_specs]
+    n_base_metrics = len(metrics)
 
     x: list[int] = []
     y: list[int] = []
@@ -82,34 +111,48 @@ def _dot_scorecard(
 
     for i, _p in enumerate(pipelines):
         for j, m in enumerate(metric_specs):
-            r = float(data.loc[i, f"{m.name}__rank"]) if np.isfinite(data.loc[i, f"{m.name}__rank"]) else np.nan
-            if not np.isfinite(r):
+            sc = float(data.loc[i, f"{m.name}__score"]) if np.isfinite(data.loc[i, f"{m.name}__score"]) else np.nan
+            if not np.isfinite(sc):
                 continue
-            n = float(len(pipelines))
-            rank_norm = 1.0 if n <= 1 else 1.0 - (r - 1.0) / max(1.0, n - 1.0)
             x.append(j)
             y.append(i)
-            c.append(rank_norm)
-            s.append(60.0 + 240.0 * rank_norm)
+            c.append(sc)
+            s.append(60.0 + 240.0 * sc)
+
+        # Summary panel (always present): average and worst scores across metrics.
+        avg_score = float(data.loc[i, "avg_score"]) if np.isfinite(data.loc[i, "avg_score"]) else np.nan
+        worst_score = float(data.loc[i, "worst_score"]) if np.isfinite(data.loc[i, "worst_score"]) else np.nan
+        if np.isfinite(avg_score):
+            x.append(n_base_metrics + 0)
+            y.append(i)
+            c.append(avg_score)
+            s.append(60.0 + 240.0 * avg_score)
+        if np.isfinite(worst_score):
+            x.append(n_base_metrics + 1)
+            y.append(i)
+            c.append(worst_score)
+            s.append(60.0 + 240.0 * worst_score)
 
     fig_h = float(max(2.0, 0.28 * len(pipelines) + 1.0))
-    fig_w = float(max(6.0, 0.9 * len(metrics) + 2.0))
+    fig_w = float(max(6.0, 0.9 * (len(metrics) + 2) + 2.0))
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
     sc = ax.scatter(x, y, c=c, s=s, cmap="viridis", vmin=0.0, vmax=1.0, edgecolors="none")
 
     ax.set_title(title)
-    ax.set_xticks(range(len(metrics)))
-    ax.set_xticklabels(metrics, rotation=45, ha="right")
+    ax.set_xticks(range(len(metrics) + 2))
+    ax.set_xticklabels([*metrics, "avg", "worst"], rotation=45, ha="right")
     ax.set_yticks(range(len(pipelines)))
     ax.set_yticklabels(pipelines, fontsize=8)
-    ax.set_xlim(-0.5, len(metrics) - 0.5)
+    ax.set_xlim(-0.5, len(metrics) + 1.5)
     ax.set_ylim(-0.5, len(pipelines) - 0.5)
     ax.invert_yaxis()
     ax.grid(True, axis="x", lw=0.5, alpha=0.2)
     ax.grid(True, axis="y", lw=0.5, alpha=0.2)
+    if n_base_metrics > 0:
+        ax.axvline(n_base_metrics - 0.5, color="black", lw=1.0, alpha=0.25)
 
     cbar = fig.colorbar(sc, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label("Rank (best→worst)")
+    cbar.set_label("Normalized rank (worst→best)")
     _savefig(fig, out_path)
     plt.close(fig)
 
@@ -142,12 +185,16 @@ def _method_grid_avg_rank(
     pipeline_col: str,
     out_path: str,
     title: str,
+    sort_mode: str,
 ) -> pd.DataFrame:
     plt = _require_matplotlib()
 
     families = _method_families(long_df)
 
-    # Metrics that are broadly comparable across method pipelines.
+    if sort_mode not in {"avg", "worst"}:
+        raise ValueError("sort_mode must be one of: avg, worst")
+
+    # Metrics that are broadly comparable across method pipelines (scenario families).
     alpha = float(pd.to_numeric(long_df.get("alpha", 0.05), errors="coerce").dropna().iloc[0]) if "alpha" in long_df.columns else 0.05
     fdr_q = float(pd.to_numeric(long_df.get("fdr_q", 0.1), errors="coerce").dropna().iloc[0]) if "fdr_q" in long_df.columns else 0.1
 
@@ -156,79 +203,90 @@ def _method_grid_avg_rank(
     tmp["alpha_fpr_dev"] = np.abs(pd.to_numeric(tmp.get("alpha_fpr", np.nan), errors="coerce") - alpha)
     tmp["q_fdr_excess"] = np.maximum(0.0, pd.to_numeric(tmp.get("q_fdr", np.nan), errors="coerce") - fdr_q)
 
-    family_specs: dict[str, list[MetricSpec]] = {
-        "null": [
-            MetricSpec("null_lambda_gc_dev", "lower"),
-            MetricSpec("alpha_fpr_dev", "lower"),
-            MetricSpec("null_ks", "lower"),
-        ],
-        "signal": [
-            MetricSpec("q_fdr_excess", "lower"),
-            MetricSpec("q_tpr", "higher"),
-            MetricSpec("roc_auc", "higher"),
-            MetricSpec("average_precision", "higher"),
-        ],
-        "signal_depth_confounded": [
-            MetricSpec("q_fdr_excess", "lower"),
-            MetricSpec("q_tpr", "higher"),
-        ],
-        "signal_offtarget": [
-            MetricSpec("q_fdr_excess", "lower"),
-            MetricSpec("q_tpr", "higher"),
-        ],
-        "signal_overdispersed": [
-            MetricSpec("q_fdr_excess", "lower"),
-            MetricSpec("q_tpr", "higher"),
-        ],
-    }
+    scenario_metric_specs: list[tuple[str, MetricSpec, str]] = [
+        ("null", MetricSpec("null_lambda_gc_dev", "lower"), "null | lambda_gc_dev"),
+        ("null", MetricSpec("alpha_fpr_dev", "lower"), "null | alpha_fpr_dev"),
+        ("null", MetricSpec("null_ks", "lower"), "null | ks"),
+        ("signal", MetricSpec("q_fdr_excess", "lower"), "signal | q_fdr_excess"),
+        ("signal", MetricSpec("q_tpr", "higher"), "signal | q_tpr"),
+        ("signal", MetricSpec("q_balanced_accuracy", "higher"), "signal | q_balanced_accuracy"),
+        ("signal", MetricSpec("q_mcc", "higher"), "signal | q_mcc"),
+        ("signal", MetricSpec("roc_auc", "higher"), "signal | roc_auc"),
+        ("signal", MetricSpec("average_precision", "higher"), "signal | average_precision"),
+        ("signal_depth_confounded", MetricSpec("q_fdr_excess", "lower"), "depth_confounded | q_fdr_excess"),
+        ("signal_depth_confounded", MetricSpec("q_tpr", "higher"), "depth_confounded | q_tpr"),
+        ("signal_depth_confounded", MetricSpec("q_balanced_accuracy", "higher"), "depth_confounded | q_balanced_accuracy"),
+        ("signal_depth_confounded", MetricSpec("q_mcc", "higher"), "depth_confounded | q_mcc"),
+        ("signal_offtarget", MetricSpec("q_fdr_excess", "lower"), "offtarget | q_fdr_excess"),
+        ("signal_offtarget", MetricSpec("q_tpr", "higher"), "offtarget | q_tpr"),
+        ("signal_offtarget", MetricSpec("q_balanced_accuracy", "higher"), "offtarget | q_balanced_accuracy"),
+        ("signal_offtarget", MetricSpec("q_mcc", "higher"), "offtarget | q_mcc"),
+        ("signal_overdispersed", MetricSpec("q_fdr_excess", "lower"), "overdispersed | q_fdr_excess"),
+        ("signal_overdispersed", MetricSpec("q_tpr", "higher"), "overdispersed | q_tpr"),
+        ("signal_overdispersed", MetricSpec("q_balanced_accuracy", "higher"), "overdispersed | q_balanced_accuracy"),
+        ("signal_overdispersed", MetricSpec("q_mcc", "higher"), "overdispersed | q_mcc"),
+        ("all", MetricSpec("runtime_sec", "lower"), "all | runtime_sec"),
+    ]
 
     pipelines = sorted(tmp[pipeline_col].dropna().astype(str).unique().tolist())
-    fam_names = list(families.keys())
-    mat = np.full((len(pipelines), len(fam_names)), np.nan, dtype=float)
+    cols = [label for _fam, _spec, label in scenario_metric_specs]
 
-    out_rows: list[dict[str, object]] = []
-    for j, fam in enumerate(fam_names):
-        fam_mask = families[fam]
-        fam_df = tmp.loc[fam_mask].copy()
-        if fam_df.empty:
+    grid = pd.DataFrame({pipeline_col: pipelines})
+    for fam, spec, label in scenario_metric_specs:
+        if fam != "all" and fam not in families:
+            raise ValueError(f"unknown family: {fam}")
+        fam_df = tmp if fam == "all" else tmp.loc[families[fam]].copy()
+        if fam_df.empty or spec.name not in fam_df.columns:
+            grid[f"{label}__value"] = np.nan
+            grid[f"{label}__rank"] = np.nan
+            grid[f"{label}__score"] = np.nan
             continue
-        agg = fam_df.groupby(pipeline_col, dropna=False).mean(numeric_only=True).reset_index()
-        agg[pipeline_col] = agg[pipeline_col].astype(str)
+        agg = fam_df.groupby(pipeline_col, dropna=False)[spec.name].mean()
+        values = pd.to_numeric(agg.reindex(pipelines), errors="coerce")
+        r, score = _rank_and_score(values, direction=spec.direction)
+        grid[f"{label}__value"] = values.to_numpy(dtype=float)
+        grid[f"{label}__rank"] = pd.to_numeric(r, errors="coerce").to_numpy(dtype=float)
+        grid[f"{label}__score"] = pd.to_numeric(score, errors="coerce").to_numpy(dtype=float)
 
-        specs = family_specs[fam]
-        # Build average rank across the family's metric set.
-        ranks: list[pd.Series] = []
-        for spec in specs:
-            if spec.name not in agg.columns:
-                continue
-            ranks.append(_rank(agg[spec.name], direction=spec.direction))
-        if not ranks:
-            continue
-        avg_rank = pd.concat(ranks, axis=1).mean(axis=1, skipna=True)
-        agg["avg_rank"] = avg_rank
+    score_cols = [f"{c}__score" for c in cols]
+    score_m = grid[score_cols].to_numpy(dtype=float)
+    with np.errstate(all="ignore"):
+        grid["avg_score"] = np.nanmean(score_m, axis=1)
+        grid["worst_score"] = np.nanmin(score_m, axis=1)
 
-        lookup = agg.set_index(pipeline_col)["avg_rank"].to_dict()
-        for i, p in enumerate(pipelines):
-            mat[i, j] = float(lookup.get(p, np.nan))
-            out_rows.append({"family": fam, pipeline_col: p, "avg_rank": lookup.get(p, np.nan)})
+    if sort_mode == "avg":
+        grid = grid.sort_values(["avg_score", "worst_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
+            drop=True
+        )
+    else:
+        grid = grid.sort_values(["worst_score", "avg_score", pipeline_col], ascending=[False, False, True], kind="mergesort").reset_index(
+            drop=True
+        )
 
-    fig_h = float(max(2.0, 0.28 * len(pipelines) + 1.0))
-    fig_w = float(max(7.0, 1.4 * len(fam_names) + 2.0))
+    heat_cols = [*score_cols, "avg_score", "worst_score"]
+    mat = grid[heat_cols].to_numpy(dtype=float)
+
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad(color="#d9d9d9")
+    mat = np.ma.masked_invalid(mat)
+
+    fig_h = float(max(2.0, 0.26 * len(pipelines) + 1.0))
+    fig_w = float(max(10.0, 0.55 * len(heat_cols) + 4.0))
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
 
-    im = ax.imshow(mat, aspect="auto", interpolation="nearest", cmap="viridis_r")
+    im = ax.imshow(mat, aspect="auto", interpolation="nearest", cmap=cmap, vmin=0.0, vmax=1.0)
     ax.set_title(title)
-    ax.set_xticks(range(len(fam_names)))
-    ax.set_xticklabels(fam_names, rotation=30, ha="right")
-    ax.set_yticks(range(len(pipelines)))
-    ax.set_yticklabels(pipelines, fontsize=8)
-    ax.invert_yaxis()
+    ax.set_xticks(range(len(heat_cols)))
+    ax.set_xticklabels([*cols, "avg", "worst"], rotation=45, ha="right")
+    ax.set_yticks(range(grid.shape[0]))
+    ax.set_yticklabels(grid[pipeline_col].astype(str).tolist(), fontsize=7)
+    ax.axvline(len(score_cols) - 0.5, color="black", lw=1.0, alpha=0.25)
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label("Average rank (lower is better)")
+    cbar.set_label("Normalized rank (worst→best)")
     _savefig(fig, out_path)
     plt.close(fig)
 
-    return pd.DataFrame(out_rows)
+    return grid
 
 
 def _plot_pareto_runtime_vs_tpr(
@@ -411,16 +469,27 @@ def main() -> None:
             MetricSpec("null_ks", "lower"),
             MetricSpec("runtime_sec", "lower"),
         ]
-        null_ranked = _dot_scorecard(
+        null_ranked_avg = _dot_scorecard(
             null_agg,
             pipeline_col="pipeline",
             metric_specs=null_specs,
             out_path=os.path.join(args.out_dir, "scorecard_null.png"),
-            title="Benchmark scorecard (null runs) — calibration + runtime",
+            title="Benchmark scorecard (null runs) — calibration + runtime (sorted by avg)",
+            sort_mode="avg",
+        )
+        null_ranked_worst = _dot_scorecard(
+            null_agg,
+            pipeline_col="pipeline",
+            metric_specs=null_specs,
+            out_path=os.path.join(args.out_dir, "scorecard_null__sort=worst.png"),
+            title="Benchmark scorecard (null runs) — calibration + runtime (sorted by worst)",
+            sort_mode="worst",
         )
         if int(args.max_pipelines) > 0:
-            null_ranked = null_ranked.head(int(args.max_pipelines))
-        _write_tsv(os.path.join(args.out_dir, "scorecard_null.tsv"), null_ranked)
+            null_ranked_avg = null_ranked_avg.head(int(args.max_pipelines))
+            null_ranked_worst = null_ranked_worst.head(int(args.max_pipelines))
+        _write_tsv(os.path.join(args.out_dir, "scorecard_null.tsv"), null_ranked_avg)
+        _write_tsv(os.path.join(args.out_dir, "scorecard_null__sort=worst.tsv"), null_ranked_worst)
         plots_made += 1
 
     # Signal scorecard: detection + runtime (common across methods).
@@ -436,17 +505,28 @@ def main() -> None:
             MetricSpec("average_precision", "higher"),
             MetricSpec("runtime_sec", "lower"),
         ]
-        sig_ranked = _dot_scorecard(
+        sig_ranked_avg = _dot_scorecard(
             sig_agg,
             pipeline_col="pipeline",
             metric_specs=sig_specs,
             out_path=os.path.join(args.out_dir, "scorecard_signal.png"),
-            title="Benchmark scorecard (signal runs) — detection + runtime",
+            title="Benchmark scorecard (signal runs) — detection + runtime (sorted by avg)",
+            sort_mode="avg",
+        )
+        sig_ranked_worst = _dot_scorecard(
+            sig_agg,
+            pipeline_col="pipeline",
+            metric_specs=sig_specs,
+            out_path=os.path.join(args.out_dir, "scorecard_signal__sort=worst.png"),
+            title="Benchmark scorecard (signal runs) — detection + runtime (sorted by worst)",
+            sort_mode="worst",
         )
         if int(args.max_pipelines) > 0:
-            sig_ranked = sig_ranked.head(int(args.max_pipelines))
-        _write_tsv(os.path.join(args.out_dir, "scorecard_signal.tsv"), sig_ranked)
-        keep = sig_ranked["pipeline"].astype(str).tolist() if (not sig_ranked.empty) else []
+            sig_ranked_avg = sig_ranked_avg.head(int(args.max_pipelines))
+            sig_ranked_worst = sig_ranked_worst.head(int(args.max_pipelines))
+        _write_tsv(os.path.join(args.out_dir, "scorecard_signal.tsv"), sig_ranked_avg)
+        _write_tsv(os.path.join(args.out_dir, "scorecard_signal__sort=worst.tsv"), sig_ranked_worst)
+        keep = sig_ranked_avg["pipeline"].astype(str).tolist() if (not sig_ranked_avg.empty) else []
         sig_for_pareto = sig_agg.loc[sig_agg["pipeline"].astype(str).isin(keep)].copy() if keep else sig_agg
         _plot_pareto_runtime_vs_tpr(
             sig_for_pareto,
@@ -478,16 +558,27 @@ def main() -> None:
                 has_any = True
                 break
         if has_any:
-            conf_ranked = _dot_scorecard(
+            conf_ranked_avg = _dot_scorecard(
                 conf_agg,
                 pipeline_col="pipeline",
                 metric_specs=conf_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_confusion.png"),
-                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime",
+                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime (sorted by avg)",
+                sort_mode="avg",
+            )
+            conf_ranked_worst = _dot_scorecard(
+                conf_agg,
+                pipeline_col="pipeline",
+                metric_specs=conf_specs,
+                out_path=os.path.join(args.out_dir, "scorecard_signal_confusion__sort=worst.png"),
+                title="Benchmark scorecard (signal runs) — confusion-matrix metrics + runtime (sorted by worst)",
+                sort_mode="worst",
             )
             if int(args.max_pipelines) > 0:
-                conf_ranked = conf_ranked.head(int(args.max_pipelines))
-            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_confusion.tsv"), conf_ranked)
+                conf_ranked_avg = conf_ranked_avg.head(int(args.max_pipelines))
+                conf_ranked_worst = conf_ranked_worst.head(int(args.max_pipelines))
+            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_confusion.tsv"), conf_ranked_avg)
+            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_confusion__sort=worst.tsv"), conf_ranked_worst)
             plots_made += 1
 
     # Estimation scorecard: only pipelines with theta metrics.
@@ -502,26 +593,49 @@ def main() -> None:
                 MetricSpec("theta_sign_acc_signal", "higher"),
                 MetricSpec("runtime_sec", "lower"),
             ]
-            est_ranked = _dot_scorecard(
+            est_ranked_avg = _dot_scorecard(
                 est_agg,
                 pipeline_col="pipeline",
                 metric_specs=est_specs,
                 out_path=os.path.join(args.out_dir, "scorecard_signal_estimation.png"),
-                title="Benchmark scorecard (signal runs) — effect estimation (theta)",
+                title="Benchmark scorecard (signal runs) — effect estimation (theta) (sorted by avg)",
+                sort_mode="avg",
+            )
+            est_ranked_worst = _dot_scorecard(
+                est_agg,
+                pipeline_col="pipeline",
+                metric_specs=est_specs,
+                out_path=os.path.join(args.out_dir, "scorecard_signal_estimation__sort=worst.png"),
+                title="Benchmark scorecard (signal runs) — effect estimation (theta) (sorted by worst)",
+                sort_mode="worst",
             )
             if int(args.max_pipelines) > 0:
-                est_ranked = est_ranked.head(int(args.max_pipelines))
-            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_estimation.tsv"), est_ranked)
+                est_ranked_avg = est_ranked_avg.head(int(args.max_pipelines))
+                est_ranked_worst = est_ranked_worst.head(int(args.max_pipelines))
+            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_estimation.tsv"), est_ranked_avg)
+            _write_tsv(os.path.join(args.out_dir, "scorecard_signal_estimation__sort=worst.tsv"), est_ranked_worst)
             plots_made += 1
 
     # Method-grid: average rank by scenario family.
-    grid_rank = _method_grid_avg_rank(
+    grid_rank_avg = _method_grid_avg_rank(
         long_df,
         pipeline_col="pipeline",
         out_path=os.path.join(args.out_dir, "method_grid_avg_rank.png"),
-        title="Benchmark method grid — average rank by scenario family",
+        title="Benchmark pipeline grid — scenario metric ranks (sorted by avg)",
+        sort_mode="avg",
     )
-    _write_tsv(os.path.join(args.out_dir, "method_grid_avg_rank.tsv"), grid_rank)
+    grid_rank_worst = _method_grid_avg_rank(
+        long_df,
+        pipeline_col="pipeline",
+        out_path=os.path.join(args.out_dir, "method_grid_avg_rank__sort=worst.png"),
+        title="Benchmark pipeline grid — scenario metric ranks (sorted by worst)",
+        sort_mode="worst",
+    )
+    if int(args.max_pipelines) > 0:
+        grid_rank_avg = grid_rank_avg.head(int(args.max_pipelines))
+        grid_rank_worst = grid_rank_worst.head(int(args.max_pipelines))
+    _write_tsv(os.path.join(args.out_dir, "method_grid_avg_rank.tsv"), grid_rank_avg)
+    _write_tsv(os.path.join(args.out_dir, "method_grid_avg_rank__sort=worst.tsv"), grid_rank_worst)
     plots_made += 1
 
     if plots_made == 0:
