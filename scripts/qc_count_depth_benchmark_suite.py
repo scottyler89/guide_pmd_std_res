@@ -41,6 +41,13 @@ def _any_png(run_dir: Path, names: list[str]) -> bool:
     return False
 
 
+def _tsv_has_cols(path: Path, required: list[str]) -> bool | None:
+    if not path.is_file():
+        return None
+    cols = set(pd.read_csv(path, sep="\t", nrows=0).columns.tolist())
+    return bool(all(c in cols for c in required))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="QC helper for scripts/run_count_depth_benchmark_suite.py output directories.")
     parser.add_argument("--suite-dir", required=True, type=str, help="Suite output directory (the --out-dir used for the suite).")
@@ -103,6 +110,16 @@ def main() -> None:
     }
     for name in _SUITE_SCORECARDS:
         figs["present"][name] = (fig_root / name).is_file()
+
+    # Spot-check that the method-grid TSV includes the new domain-separated summary columns.
+    required_cols = [
+        "avg_score_min_domain",
+        "worst_score_min_domain",
+        "avg_score_null",
+        "avg_score_signal",
+        "coverage_frac_min_domain",
+    ]
+    figs["method_grid_has_min_domain_cols"] = _tsv_has_cols(fig_root / "method_grid_avg_rank.tsv", required_cols)
     report["figures"] = figs
 
     out_path = suite_dir / "suite_qc_report.json"

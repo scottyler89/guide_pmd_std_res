@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from datetime import timezone
 from importlib import metadata
+from pathlib import Path
 
 import pandas as pd
 
@@ -66,6 +67,12 @@ def main() -> None:
         help="Optional named grid preset (applies only when the suite runs the grid).",
     )
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=0,
+        help="If >0, pass --jobs to the grid runner (default: 0 uses grid default).",
+    )
+    parser.add_argument(
         "--grid-tsv",
         default=None,
         type=str,
@@ -93,6 +100,12 @@ def main() -> None:
             "If enabled, reuse existing <grid-out-dir>/count_depth_grid_summary.tsv when present. "
             "Also allows writing into a non-empty --out-dir (default: disabled)."
         ),
+    )
+    parser.add_argument(
+        "--force-resume",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="If enabled, allow --resume across differing git HEADs (default: disabled).",
     )
     parser.add_argument(
         "--heatmaps",
@@ -193,10 +206,27 @@ def main() -> None:
         ]
 
     grid_args = preset_args + list(args.grid_args or []) + list(unknown)
+    if int(args.jobs) > 0 and "--jobs" not in [str(x) for x in grid_args]:
+        grid_args.extend(["--jobs", str(int(args.jobs))])
     if args.grid_tsv is not None and grid_args:
         raise ValueError("cannot use --grid-args (or extra grid flags) together with --grid-tsv")
 
     out_dir = str(args.out_dir)
+    current_git = _try_git_info()
+    if bool(args.resume) and not bool(args.force_resume):
+        prev_manifest_path = os.path.join(out_dir, "suite_manifest.json")
+        if os.path.isfile(prev_manifest_path):
+            try:
+                prev = json.loads(Path(prev_manifest_path).read_text(encoding="utf-8"))
+            except Exception as e:  # noqa: BLE001 - surface as a clear resume error
+                raise ValueError(f"--resume requires a readable suite_manifest.json; failed to read: {prev_manifest_path!r}: {e}") from e
+            prev_head = (prev.get("git") or {}).get("head")
+            cur_head = current_git.get("head")
+            if prev_head and cur_head and str(prev_head) != str(cur_head):
+                raise ValueError(
+                    "refusing to --resume a suite created at a different git HEAD "
+                    f"(prev={prev_head} cur={cur_head}); use --force-resume to override"
+                )
     if os.path.exists(out_dir) and (not _dir_is_empty(out_dir)) and (not bool(args.resume)):
         raise ValueError(f"refusing to write into non-empty --out-dir (use a fresh path, or pass --resume): {out_dir!r}")
     os.makedirs(out_dir, exist_ok=True)
@@ -227,7 +257,7 @@ def main() -> None:
                 ]
             ),
         },
-        "git": _try_git_info(),
+        "git": current_git,
         "commands": {},
         "paths": {},
     }
