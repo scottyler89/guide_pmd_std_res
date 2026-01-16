@@ -6,6 +6,8 @@ import os
 
 import pandas as pd
 
+from count_depth_scenarios import attach_scenarios
+
 
 def _require_matplotlib():
     import matplotlib
@@ -111,6 +113,7 @@ def main() -> None:
         type=str,
         nargs="+",
         default=[
+            "scenario_id",
             "response_mode",
             "normalization_mode",
             "logratio_mode",
@@ -131,6 +134,8 @@ def main() -> None:
             df = df.loc[pd.to_numeric(df[frac_col], errors="coerce").fillna(0.0) == 0.0].copy()
     if df.empty:
         raise ValueError("no rows selected after filtering")
+
+    df = attach_scenarios(df)
 
     x_col = _pick_metric_col(df, "depth_corr_treatment_log_libsize")
     if x_col is None:
@@ -153,7 +158,10 @@ def main() -> None:
             key_values = {c: v for c, v in zip(group_cols, key)}
             tag = _tag_from_values({"prefix": prefix, **key_values})
 
-            title = f"{prefix}: null-theta bias vs depth confounding\n{tag}"
+            scenario_label = ""
+            if "scenario" in sub.columns and int(sub["scenario"].nunique(dropna=False)) == 1:
+                scenario_label = str(sub["scenario"].iloc[0])
+            title = f"{prefix}: null-theta bias vs depth confounding\n{scenario_label}\n{tag}" if scenario_label else f"{prefix}: null-theta bias vs depth confounding\n{tag}"
             out_path = os.path.join(args.out_dir, f"theta_bias_null_mean__{tag}.png")
 
             color_col = "depth_covariate_mode" if "depth_covariate_mode" in sub.columns else "include_depth_covariate"
