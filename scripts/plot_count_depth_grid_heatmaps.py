@@ -8,6 +8,8 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
+from count_depth_scenarios import attach_scenarios
+
 
 def _require_matplotlib():
     import matplotlib
@@ -195,15 +197,14 @@ def main() -> None:
         type=str,
         nargs="+",
         default=[
+            "scenario_id",
             "response_mode",
             "normalization_mode",
             "logratio_mode",
             "depth_covariate_mode",
             "include_batch_covariate",
-            "frac_signal",
-            "effect_sd",
-            "offtarget_guide_frac",
-            "nb_overdispersion",
+            "n_reference_genes",
+            "lmm_scope",
         ],
         help="Columns used to define independent heatmaps (default: key pipeline/scenario knobs).",
     )
@@ -212,6 +213,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="If enabled, fail if any non-faceted config columns vary within a heatmap group (default: enabled).",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="If enabled, skip plots whose output PNG already exists (useful for resuming a long run).",
     )
     args = parser.parse_args()
 
@@ -222,6 +229,10 @@ def main() -> None:
     y_col = str(args.y_col)
     if x_col not in df.columns or y_col not in df.columns:
         raise ValueError(f"missing required axis column(s): x={x_col!r} y={y_col!r}")
+
+    # Tag each row with a scenario family identifier, excluding the heatmap axes so we can visualize
+    # how performance changes across (x, y) while holding other simulation knobs fixed.
+    df = attach_scenarios(df, exclude_cols=[x_col, y_col])
 
     facet_cols = [c for c in [str(c) for c in args.facet_cols] if c in df.columns]
 
@@ -255,6 +266,8 @@ def main() -> None:
                     tag = _key_to_tag(facet_cols, key)
                     metric_slug = metric_col.removeprefix(f"{prefix}_")
                     out_path = os.path.join(args.out_dir, f"heatmap__{prefix}__{metric_slug}__{tag}.png")
+                    if bool(args.skip_existing) and os.path.isfile(out_path):
+                        continue
                     _plot_heatmap(
                         pivot,
                         out_path=out_path,
@@ -286,6 +299,8 @@ def main() -> None:
                     tag = _key_to_tag(facet_cols, key)
                     metric_slug = metric_col.removeprefix(f"{prefix}_")
                     out_path = os.path.join(args.out_dir, f"heatmap__{prefix}__{metric_slug}__{tag}.png")
+                    if bool(args.skip_existing) and os.path.isfile(out_path):
+                        continue
                     _plot_heatmap(
                         pivot,
                         out_path=out_path,

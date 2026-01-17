@@ -584,6 +584,8 @@ def main() -> None:
         fig_heatmaps = os.path.join(fig_root, "heatmaps")
         os.makedirs(fig_heatmaps, exist_ok=True)
         cmd = [sys.executable, _script_path("plot_count_depth_grid_heatmaps.py"), "--grid-tsv", grid_tsv, "--out-dir", fig_heatmaps]
+        if bool(args.resume):
+            cmd.append("--skip-existing")
         manifest["commands"]["plot_heatmaps"] = cmd
         _run(cmd)
         manifest["paths"]["figures_heatmaps_dir"] = fig_heatmaps
