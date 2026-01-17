@@ -409,3 +409,41 @@ Goal: a small set of figures that makes tradeoffs obvious to a reader.
   - [x] Suite forwards `--resume` to the grid runner and streams subcommand output (background logs show progress).
 - [x] Add a small QC helper for suite directories (`scripts/qc_count_depth_benchmark_suite.py`) to sanity-check completion + key artifacts.
 - [x] Close benchmark “coverage gaps” for pipeline-vs-scenario comparisons: scenario presets must not hard-disable analysis-pipeline components (depth/batch covariates), and method-grid ranking must prioritize complete-coverage pipelines when gaps exist.
+
+#### P4.8 — Abundance / Composition Stress Tests (Hierarchical λ regimes)
+Goal: stress-test pipeline performance under realistic **compositional abundance regimes**, including heavy tails and within-gene dominance
+(analogous to microbiome genus/species or cell-state/cell-type hierarchies).
+
+Phase A — Codify the current abundance model (SSoT + audit)
+- [x] Baseline today (already implemented): gene-level `log_lambda_gene ~ Normal(log_mean, gene_lambda_log_sd)` and within-gene guide `log_lambda_guide = log_lambda_gene + Normal(0, guide_lambda_log_sd)`.
+- [ ] Add a single, reusable “abundance audit” summary (written per run) that reports:
+  - [ ] gene-level: quantiles of `log_lambda_gene`, tail metrics (top-k share / Gini / entropy), and rare/zero fraction
+  - [ ] within-gene: distribution of per-gene guide dominance (e.g., max/mean, SD(log lambda) within gene)
+  - [ ] sample-level: library-size distribution and effective sparsity (zero fraction per sample)
+  - [ ] ensure the audit is derived from **simulated truth** (not downstream outputs), and is recorded in `benchmark_report.json`
+
+Phase B — Gene-level abundance families (top layer: gene/species/cell-type)
+- [ ] Add explicit `gene_lambda_family` choices (default preserves current behavior):
+  - [ ] `lognormal` (current; compatibility path)
+  - [ ] `mixture_lognormal` (rare-vs-abundant mixture; tunable `pi_high`, `delta_log_mean`, `log_sds`)
+  - [ ] `power_law` / Pareto-like (few dominant, many rare; tunable tail index; avoid oracle scaling)
+- [ ] Define “battle-test” presets for the above that target edge-of-failure behavior (not “perfect data”):
+  - [ ] “few dominant, many rare” (microbiome-like)
+  - [ ] “many dominant, few rare” (broadly abundant classes)
+
+Phase C — Within-gene guide abundance families (bottom layer: guide/genus/cell-state)
+- [ ] Add explicit `guide_lambda_family` choices (default preserves current behavior):
+  - [ ] `lognormal_noise` (current; compatibility path)
+  - [ ] `dirichlet_weights` (symmetric Dirichlet with tunable concentration to create within-gene dominance)
+- [ ] Ensure within-gene models preserve the intended interpretation of `log_lambda_gene` (mean per guide) while allowing dominance patterns.
+
+Phase D — Benchmark grid + suite integration (without combinatorial explosion)
+- [ ] Add a dedicated suite preset focused on abundance regimes (keep other knobs minimal to avoid “metric column blow-up”):
+  - [ ] sweep a small set of (gene_lambda_family × guide_lambda_family) combinations
+  - [ ] keep depth/batch/offtarget/overdispersion scenarios as separate scenario columns (never pooled across null/signal)
+  - [ ] ensure scenario labeling (`scenario_id` / `scenario`) includes the abundance-family IDs + only the parameters that vary
+
+Phase E — Visualization + reporting (statistician-first)
+- [ ] Add figure(s) that explicitly show the simulated abundance regime per scenario (rank-abundance + histograms), alongside performance:
+  - [ ] one-page “scenario audit” panel (so failures can be attributed to a real regime, not hidden knobs)
+  - [ ] keep pipelines in rows; scenario×metric in columns; avoid any null/signal averaging
