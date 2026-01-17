@@ -438,10 +438,10 @@ Phase C — Within-gene guide abundance families (bottom layer: guide/genus/cell
 - [x] Ensure within-gene models preserve the intended interpretation of `log_lambda_gene` (mean per guide) while allowing dominance patterns.
 
 Phase D — Benchmark grid + suite integration (without combinatorial explosion)
-- [ ] Add a dedicated suite preset focused on abundance regimes (keep other knobs minimal to avoid “metric column blow-up”):
-  - [ ] sweep a small set of (gene_lambda_family × guide_lambda_family) combinations
+- [x] Add a dedicated suite preset focused on abundance regimes (keep other knobs minimal to avoid “metric column blow-up”):
+  - [x] sweep a small set of (gene_lambda_family × guide_lambda_family) combinations
   - [ ] keep depth/batch/offtarget/overdispersion scenarios as separate scenario columns (never pooled across null/signal)
-  - [ ] ensure scenario labeling (`scenario_id` / `scenario`) includes the abundance-family IDs + only the parameters that vary
+  - [x] ensure scenario labeling (`scenario_id` / `scenario`) includes the abundance-family IDs + only the parameters that vary
 
 Phase E — Visualization + reporting (statistician-first)
 - [ ] Add figure(s) that explicitly show the simulated abundance regime per scenario (rank-abundance + histograms), alongside performance:
