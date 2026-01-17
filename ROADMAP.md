@@ -416,26 +416,26 @@ Goal: stress-test pipeline performance under realistic **compositional abundance
 
 Phase A — Codify the current abundance model (SSoT + audit)
 - [x] Baseline today (already implemented): gene-level `log_lambda_gene ~ Normal(log_mean, gene_lambda_log_sd)` and within-gene guide `log_lambda_guide = log_lambda_gene + Normal(0, guide_lambda_log_sd)`.
-- [ ] Add a single, reusable “abundance audit” summary (written per run) that reports:
-  - [ ] gene-level: quantiles of `log_lambda_gene`, tail metrics (top-k share / Gini / entropy), and rare/zero fraction
-  - [ ] within-gene: distribution of per-gene guide dominance (e.g., max/mean, SD(log lambda) within gene)
-  - [ ] sample-level: library-size distribution and effective sparsity (zero fraction per sample)
-  - [ ] ensure the audit is derived from **simulated truth** (not downstream outputs), and is recorded in `benchmark_report.json`
+- [x] Add a single, reusable “abundance audit” summary (written per run) that reports:
+  - [x] gene-level: quantiles of `log_lambda_gene`, tail metrics (top-k share / Gini / entropy), and rare/zero fraction
+  - [x] within-gene: distribution of per-gene guide dominance (e.g., max/mean, SD(log lambda) within gene)
+  - [x] sample-level: library-size distribution and effective sparsity (zero fraction per sample)
+  - [x] ensure the audit is derived from **simulated truth** (not downstream outputs), and is recorded in `benchmark_report.json`
 
 Phase B — Gene-level abundance families (top layer: gene/species/cell-type)
-- [ ] Add explicit `gene_lambda_family` choices (default preserves current behavior):
-  - [ ] `lognormal` (current; compatibility path)
-  - [ ] `mixture_lognormal` (rare-vs-abundant mixture; tunable `pi_high`, `delta_log_mean`, `log_sds`)
-  - [ ] `power_law` / Pareto-like (few dominant, many rare; tunable tail index; avoid oracle scaling)
+- [x] Add explicit `gene_lambda_family` choices (default preserves current behavior):
+  - [x] `lognormal` (current; compatibility path)
+  - [x] `mixture_lognormal` (rare-vs-abundant mixture; tunable `pi_high`, `delta_log_mean`, `log_sds`)
+  - [x] `power_law` / Pareto-like (few dominant, many rare; tunable tail index; avoid oracle scaling)
 - [ ] Define “battle-test” presets for the above that target edge-of-failure behavior (not “perfect data”):
   - [ ] “few dominant, many rare” (microbiome-like)
   - [ ] “many dominant, few rare” (broadly abundant classes)
 
 Phase C — Within-gene guide abundance families (bottom layer: guide/genus/cell-state)
-- [ ] Add explicit `guide_lambda_family` choices (default preserves current behavior):
-  - [ ] `lognormal_noise` (current; compatibility path)
-  - [ ] `dirichlet_weights` (symmetric Dirichlet with tunable concentration to create within-gene dominance)
-- [ ] Ensure within-gene models preserve the intended interpretation of `log_lambda_gene` (mean per guide) while allowing dominance patterns.
+- [x] Add explicit `guide_lambda_family` choices (default preserves current behavior):
+  - [x] `lognormal_noise` (current; compatibility path)
+  - [x] `dirichlet_weights` (symmetric Dirichlet with tunable concentration to create within-gene dominance)
+- [x] Ensure within-gene models preserve the intended interpretation of `log_lambda_gene` (mean per guide) while allowing dominance patterns.
 
 Phase D — Benchmark grid + suite integration (without combinatorial explosion)
 - [ ] Add a dedicated suite preset focused on abundance regimes (keep other knobs minimal to avoid “metric column blow-up”):
