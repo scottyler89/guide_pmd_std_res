@@ -427,9 +427,17 @@ Phase B — Gene-level abundance families (top layer: gene/species/cell-type)
   - [x] `lognormal` (current; compatibility path)
   - [x] `mixture_lognormal` (rare-vs-abundant mixture; tunable `pi_high`, `delta_log_mean`, `log_sds`)
   - [x] `power_law` / Pareto-like (few dominant, many rare; tunable tail index; avoid oracle scaling)
-- [ ] Define “battle-test” presets for the above that target edge-of-failure behavior (not “perfect data”):
-  - [ ] “few dominant, many rare” (microbiome-like)
-  - [ ] “many dominant, few rare” (broadly abundant classes)
+- [x] Define “battle-test” presets for the above that target edge-of-failure behavior (not “perfect data”):
+  - [x] Parameter scouting: `scripts/scout_abundance_params.py` (choose regimes that land in/near dropout with ~3–4 orders of magnitude dynamic range).
+  - [x] “few dominant, many rare” (microbiome-like; mixture lognormal at a sparse baseline):
+    - [x] `guide_lambda_log_mean=log(20)`, `gene_lambda_log_sd=0.4`, `guide_lambda_log_sd=1.0`
+    - [x] `gene_lambda_family=mixture_lognormal`, `mix_pi_high=0.05`, `mix_delta_log_mean=2.5`
+  - [x] “many dominant, few rare” (broadly abundant classes; mixture lognormal at the same sparse baseline):
+    - [x] `guide_lambda_log_mean=log(20)`, `gene_lambda_log_sd=0.4`, `guide_lambda_log_sd=1.0`
+    - [x] `gene_lambda_family=mixture_lognormal`, `mix_pi_high=0.8`, `mix_delta_log_mean=2.5`
+  - [x] Power-law heavy tail (additional “few dominant” regime without mixture assumptions):
+    - [x] `guide_lambda_log_mean=log(20)`, `guide_lambda_log_sd=1.0`
+    - [x] `gene_lambda_family=power_law`, `power_alpha=1.05`
 
 Phase C — Within-gene guide abundance families (bottom layer: guide/genus/cell-state)
 - [x] Add explicit `guide_lambda_family` choices (default preserves current behavior):
