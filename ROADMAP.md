@@ -448,10 +448,11 @@ Phase C — Within-gene guide abundance families (bottom layer: guide/genus/cell
 Phase D — Benchmark grid + suite integration (without combinatorial explosion)
 - [x] Add a dedicated suite preset focused on abundance regimes (keep other knobs minimal to avoid “metric column blow-up”):
   - [x] sweep a small set of (gene_lambda_family × guide_lambda_family) combinations
-  - [ ] keep depth/batch/offtarget/overdispersion scenarios as separate scenario columns (never pooled across null/signal)
+  - [x] keep depth/batch/offtarget/overdispersion scenarios as separate scenario columns (never pooled across null/signal)
   - [x] ensure scenario labeling (`scenario_id` / `scenario`) includes the abundance-family IDs + only the parameters that vary
 
 Phase E — Visualization + reporting (statistician-first)
-- [ ] Add figure(s) that explicitly show the simulated abundance regime per scenario (rank-abundance + histograms), alongside performance:
-  - [ ] one-page “scenario audit” panel (so failures can be attributed to a real regime, not hidden knobs)
-  - [ ] keep pipelines in rows; scenario×metric in columns; avoid any null/signal averaging
+- [x] Add figure(s) that explicitly show the simulated abundance regime per scenario (rank-abundance + histograms), alongside performance:
+  - [x] one-page “scenario audit” panel (rank-abundance + distributions): `scripts/plot_count_depth_abundance_scenarios.py`
+  - [x] run by default for `--preset abundance`: `scripts/run_count_depth_benchmark_suite.py`
+  - [x] keep pipelines in rows; scenario×metric in columns; avoid any null/signal averaging (benchmark-wide invariant)
