@@ -718,6 +718,21 @@ def main() -> None:
     _run(cmd)
     manifest["paths"]["figures_p_hist_dir"] = fig_p_hist
 
+    if str(args.preset) == "abundance":
+        fig_abundance = os.path.join(fig_root, "abundance_audit")
+        os.makedirs(fig_abundance, exist_ok=True)
+        cmd = [
+            sys.executable,
+            _script_path("plot_count_depth_abundance_scenarios.py"),
+            "--grid-tsv",
+            grid_tsv,
+            "--out-dir",
+            fig_abundance,
+        ]
+        manifest["commands"]["plot_abundance_audit"] = cmd
+        _run(cmd)
+        manifest["paths"]["figures_abundance_audit_dir"] = fig_abundance
+
     if bool(args.heatmaps):
         fig_heatmaps = os.path.join(fig_root, "heatmaps")
         os.makedirs(fig_heatmaps, exist_ok=True)
