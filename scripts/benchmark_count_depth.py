@@ -268,6 +268,14 @@ class CountDepthBenchmarkConfig:
     guide_lambda_log_sd: float
     # Additional gene-level baseline heterogeneity on log(lambda).
     gene_lambda_log_sd: float
+    # Gene-level (top-layer) abundance family on log(lambda_gene) or lambda_gene.
+    gene_lambda_family: str
+    gene_lambda_mix_pi_high: float
+    gene_lambda_mix_delta_log_mean: float
+    gene_lambda_power_alpha: float
+    # Within-gene (bottom-layer) guide abundance family.
+    guide_lambda_family: str
+    guide_lambda_dirichlet_alpha0: float
     # Per-sample depth variation (log-normal parameters for a multiplicative factor).
     depth_log_mean: float
     depth_log_sd: float
@@ -359,6 +367,21 @@ class CountDepthBenchmarkConfig:
             raise ValueError("n_reference_genes must be >= 0")
         if str(self.logratio_mode) == "alr_refset" and int(self.n_reference_genes) < 1:
             raise ValueError("n_reference_genes must be >= 1 for logratio_mode=alr_refset")
+
+        if str(self.gene_lambda_family) not in {"lognormal", "mixture_lognormal", "power_law"}:
+            raise ValueError("gene_lambda_family must be one of: lognormal, mixture_lognormal, power_law")
+        if str(self.gene_lambda_family) == "mixture_lognormal":
+            if not (0.0 < float(self.gene_lambda_mix_pi_high) < 1.0):
+                raise ValueError("gene_lambda_mix_pi_high must be in (0, 1)")
+            if float(self.gene_lambda_mix_delta_log_mean) < 0.0:
+                raise ValueError("gene_lambda_mix_delta_log_mean must be >= 0")
+        if str(self.gene_lambda_family) == "power_law" and float(self.gene_lambda_power_alpha) <= 1.0:
+            raise ValueError("gene_lambda_power_alpha must be > 1.0 for gene_lambda_family=power_law")
+
+        if str(self.guide_lambda_family) not in {"lognormal_noise", "dirichlet_weights"}:
+            raise ValueError("guide_lambda_family must be one of: lognormal_noise, dirichlet_weights")
+        if str(self.guide_lambda_family) == "dirichlet_weights" and float(self.guide_lambda_dirichlet_alpha0) <= 0.0:
+            raise ValueError("guide_lambda_dirichlet_alpha0 must be > 0 for guide_lambda_family=dirichlet_weights")
         if self.response_mode == "pmd_std_res":
             if str(self.normalization_mode) != "none":
                 raise ValueError("normalization_mode must be 'none' for response_mode=pmd_std_res")
@@ -648,11 +671,7 @@ def simulate_counts_and_std_res(
     gene_theta = np.concatenate([np.zeros(n_ref_genes, dtype=float), gene_theta_target]).astype(float)
     is_signal = np.concatenate([np.zeros(n_ref_genes, dtype=bool), is_signal_target]).astype(bool)
 
-    gene_log_lambda = rng.normal(
-        loc=float(cfg.guide_lambda_log_mean),
-        scale=float(cfg.gene_lambda_log_sd),
-        size=int(n_ref_genes + n_target_genes),
-    ).astype(float)
+    gene_log_lambda = _sample_gene_log_lambda(cfg, rng, n_genes=int(n_ref_genes + n_target_genes))
 
     truth_gene = pd.DataFrame(
         {
@@ -676,10 +695,30 @@ def simulate_counts_and_std_res(
     for gene_i, (gene_id, theta) in enumerate(zip(gene_ids, gene_theta)):
         gene_is_signal = bool(is_signal[gene_i]) and (not bool(is_reference[gene_i]))
         gene_ll = float(gene_log_lambda[gene_i])
+
+        if str(cfg.guide_lambda_family) == "dirichlet_weights":
+            m = int(cfg.guides_per_gene)
+            alpha0 = float(cfg.guide_lambda_dirichlet_alpha0)
+            alpha = np.full(m, alpha0 / float(m), dtype=float)
+            # Interpret exp(log_lambda_gene) as the mean per-guide baseline; set total to m * exp(log_lambda_gene).
+            gene_total = float(np.exp(gene_ll)) * float(m)
+            w = rng.dirichlet(alpha)
+            guide_lambda_bases = (gene_total * w).astype(float)
+            guide_lambda_bases = np.clip(guide_lambda_bases, 1e-12, None)
+            guide_log_lambdas = np.log(guide_lambda_bases).astype(float)
+        else:
+            guide_lambda_bases = None
+            guide_log_lambdas = None
+
         for j in range(int(cfg.guides_per_gene)):
             guide_id = f"{gene_id}__g{j+1:02d}"
-            log_lambda_guide = gene_ll + float(rng.normal(loc=0.0, scale=float(cfg.guide_lambda_log_sd)))
-            lambda_base = float(np.exp(log_lambda_guide))
+            if str(cfg.guide_lambda_family) == "dirichlet_weights":
+                log_lambda_guide = float(guide_log_lambdas[j])
+                lambda_base = float(guide_lambda_bases[j])
+            else:
+                # Compatibility path: identical to the historical simulation behavior.
+                log_lambda_guide = gene_ll + float(rng.normal(loc=0.0, scale=float(cfg.guide_lambda_log_sd)))
+                lambda_base = float(np.exp(log_lambda_guide))
             slope_dev = (
                 float(rng.normal(loc=0.0, scale=float(cfg.guide_slope_sd)))
                 if gene_is_signal and float(cfg.guide_slope_sd) > 0
@@ -775,6 +814,147 @@ def simulate_counts_and_std_res(
         truth_gene.merge(truth_guide.groupby("gene_id").size().rename("m_guides"), on="gene_id"),
         truth_guide,
     )
+
+
+def _sample_gene_log_lambda(cfg: CountDepthBenchmarkConfig, rng: np.random.Generator, *, n_genes: int) -> np.ndarray:
+    """
+    Sample per-gene baseline log(lambda) for the simulation.
+
+    Interpretation: for the default within-gene model, exp(log_lambda_gene) is the baseline per-guide mean count at depth=1.
+    """
+
+    if str(cfg.gene_lambda_family) == "lognormal":
+        # Compatibility path: identical to the historical simulation behavior.
+        return rng.normal(loc=float(cfg.guide_lambda_log_mean), scale=float(cfg.gene_lambda_log_sd), size=int(n_genes)).astype(float)
+
+    if str(cfg.gene_lambda_family) == "mixture_lognormal":
+        # Two-component mixture on the log scale: low = base-delta, high = base+delta.
+        is_high = rng.random(int(n_genes)) < float(cfg.gene_lambda_mix_pi_high)
+        means = float(cfg.guide_lambda_log_mean) + np.where(is_high, float(cfg.gene_lambda_mix_delta_log_mean), -float(cfg.gene_lambda_mix_delta_log_mean))
+        return rng.normal(loc=means, scale=float(cfg.gene_lambda_log_sd)).astype(float)
+
+    if str(cfg.gene_lambda_family) == "power_law":
+        # Pareto-like heavy tail on the linear scale, matched to a target median.
+        alpha = float(cfg.gene_lambda_power_alpha)
+        target_median = float(np.exp(float(cfg.guide_lambda_log_mean)))
+        xm = target_median / float(2.0 ** (1.0 / alpha))
+        gene_lambda = xm * (1.0 + rng.pareto(alpha, size=int(n_genes)))
+        gene_lambda = np.clip(gene_lambda, 1e-12, None)
+        return np.log(gene_lambda).astype(float)
+
+    raise ValueError(f"unsupported gene_lambda_family: {cfg.gene_lambda_family!r}")
+
+
+def _compute_abundance_audit(
+    truth_gene: pd.DataFrame,
+    truth_guide: pd.DataFrame,
+    counts_df: pd.DataFrame,
+) -> dict[str, object]:
+    def _q(x: np.ndarray, qs: list[float]) -> dict[str, float | None]:
+        x = np.asarray(x, dtype=float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            return {f"p{int(q*100):02d}": None for q in qs}
+        return {f"p{int(q*100):02d}": float(np.quantile(x, q)) for q in qs}
+
+    def _gini(x: np.ndarray) -> float | None:
+        x = np.asarray(x, dtype=float)
+        x = x[np.isfinite(x)]
+        x = x[x >= 0]
+        if x.size == 0:
+            return None
+        s = float(np.sum(x))
+        if s <= 0:
+            return None
+        x = np.sort(x)
+        n = x.size
+        # Gini = 1 - 2 * sum_{i}( (n-i+0.5)/n * x_i ) / sum(x)
+        i = np.arange(1, n + 1, dtype=float)
+        g = 1.0 - 2.0 * float(np.sum((n - i + 0.5) * x)) / (float(n) * s)
+        return float(np.clip(g, 0.0, 1.0))
+
+    def _top_share(x: np.ndarray, frac: float) -> float | None:
+        x = np.asarray(x, dtype=float)
+        x = x[np.isfinite(x)]
+        x = x[x >= 0]
+        if x.size == 0:
+            return None
+        total = float(np.sum(x))
+        if total <= 0:
+            return None
+        k = max(1, int(np.ceil(float(frac) * x.size)))
+        top = np.sort(x)[::-1][:k]
+        return float(np.sum(top) / total)
+
+    def _entropy(x: np.ndarray) -> float | None:
+        x = np.asarray(x, dtype=float)
+        x = x[np.isfinite(x)]
+        x = x[x >= 0]
+        if x.size == 0:
+            return None
+        total = float(np.sum(x))
+        if total <= 0:
+            return None
+        p = x / total
+        p = p[p > 0]
+        return float(-np.sum(p * np.log(p)))
+
+    log_lambda_gene = pd.to_numeric(truth_gene.get("log_lambda_gene"), errors="coerce").to_numpy(dtype=float)
+    lambda_guide = pd.to_numeric(truth_guide.get("lambda_base"), errors="coerce").to_numpy(dtype=float)
+    log_lambda_guide = pd.to_numeric(truth_guide.get("log_lambda_guide"), errors="coerce").to_numpy(dtype=float)
+
+    gene_total = truth_guide.groupby("gene_id")["lambda_base"].sum()
+    gene_total = pd.to_numeric(gene_total, errors="coerce").to_numpy(dtype=float)
+
+    within_gene_max_over_mean = (truth_guide.groupby("gene_id")["lambda_base"].max() / truth_guide.groupby("gene_id")["lambda_base"].mean()).to_numpy(
+        dtype=float
+    )
+    within_gene_log_sd = truth_guide.groupby("gene_id")["log_lambda_guide"].std(ddof=1).fillna(0.0).to_numpy(dtype=float)
+
+    counts = counts_df.to_numpy(dtype=float)
+    zero_frac_per_sample = float(np.mean(counts == 0.0, axis=0).mean()) if counts.size else 0.0
+    zero_frac_all = float(np.mean(counts == 0.0)) if counts.size else 0.0
+
+    out: dict[str, object] = {
+        "gene_log_lambda": {
+            "n": int(np.isfinite(log_lambda_gene).sum()),
+            "mean": float(np.nanmean(log_lambda_gene)) if np.isfinite(log_lambda_gene).any() else None,
+            "sd": float(np.nanstd(log_lambda_gene, ddof=1)) if int(np.isfinite(log_lambda_gene).sum()) > 1 else 0.0,
+            **_q(log_lambda_gene, [0.01, 0.05, 0.50, 0.95, 0.99]),
+        },
+        "guide_lambda": {
+            "n": int(np.isfinite(lambda_guide).sum()),
+            **_q(lambda_guide, [0.01, 0.05, 0.50, 0.95, 0.99]),
+            "frac_lt_1": float(np.mean(lambda_guide < 1.0)) if np.isfinite(lambda_guide).any() else None,
+        },
+        "gene_total_lambda": {
+            "n": int(np.isfinite(gene_total).sum()),
+            **_q(gene_total, [0.01, 0.05, 0.50, 0.95, 0.99]),
+            "gini": _gini(gene_total),
+            "entropy": _entropy(gene_total),
+            "top_1pct_share": _top_share(gene_total, 0.01),
+            "top_5pct_share": _top_share(gene_total, 0.05),
+        },
+        "guide_total_lambda": {
+            "gini": _gini(lambda_guide),
+            "entropy": _entropy(lambda_guide),
+            "top_1pct_share": _top_share(lambda_guide, 0.01),
+            "top_5pct_share": _top_share(lambda_guide, 0.05),
+        },
+        "within_gene": {
+            "max_over_mean": {
+                **_q(within_gene_max_over_mean, [0.50, 0.90, 0.99]),
+            },
+            "log_lambda_sd": {
+                **_q(within_gene_log_sd, [0.50, 0.90, 0.99]),
+            },
+        },
+        "counts_zero_frac": {
+            "overall": zero_frac_all,
+            "per_sample_mean": zero_frac_per_sample,
+        },
+    }
+    return out
 
 
 def _summarize_p(p: pd.Series, *, alpha: float) -> dict[str, float]:
@@ -901,6 +1081,11 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     truth_gene.to_csv(truth_path, sep="\t", index=False)
     truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
 
+    abundance_audit = _compute_abundance_audit(truth_gene, truth_guide, counts_df)
+    abundance_audit_path = os.path.join(out_dir, "sim_abundance_audit.json")
+    with open(abundance_audit_path, "w", encoding="utf-8") as f:
+        json.dump(_json_sanitize(abundance_audit), f, indent=2, sort_keys=True, allow_nan=False)
+
     mean_disp_path, mean_disp_qc = _write_mean_dispersion_tables(counts_df, ann_df, out_dir=out_dir)
     mean_disp_gene_path, mean_disp_gene_qc = _write_gene_mean_dispersion_tables(counts_df, ann_df, out_dir=out_dir)
     depth_qc = {
@@ -916,6 +1101,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         "mean_dispersion": mean_disp_qc,
         "mean_dispersion_gene": mean_disp_gene_qc,
         "depth_proxy": depth_qc,
+        "abundance_audit": abundance_audit,
     }
 
     mm_sanity = mm.copy()
@@ -1104,6 +1290,7 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
             "counts_tsv": counts_path,
             "counts_mean_dispersion_tsv": mean_disp_path,
             "counts_gene_mean_dispersion_tsv": mean_disp_gene_path,
+            "abundance_audit_json": abundance_audit_path,
             "model_matrix_tsv": mm_path,
             "std_res_tsv": std_res_path,
             "truth_sample_tsv": truth_sample_path,
@@ -1283,6 +1470,44 @@ def main() -> None:
     parser.add_argument("--guide-lambda-log-mean", type=float, default=np.log(200.0), help="log-mean baseline guide lambda.")
     parser.add_argument("--guide-lambda-log-sd", type=float, default=0.8, help="log-sd baseline guide lambda.")
     parser.add_argument("--gene-lambda-log-sd", type=float, default=0.5, help="Additional gene-level log-sd on lambda (default: 0.5).")
+    parser.add_argument(
+        "--gene-lambda-family",
+        type=str,
+        choices=["lognormal", "mixture_lognormal", "power_law"],
+        default="lognormal",
+        help="Gene-level (top-layer) abundance family (default: lognormal).",
+    )
+    parser.add_argument(
+        "--gene-lambda-mix-pi-high",
+        type=float,
+        default=0.10,
+        help="Mixture lognormal: fraction in the high-abundance component (only used when --gene-lambda-family=mixture_lognormal).",
+    )
+    parser.add_argument(
+        "--gene-lambda-mix-delta-log-mean",
+        type=float,
+        default=2.0,
+        help="Mixture lognormal: component mean separation on log scale (low=base-delta, high=base+delta).",
+    )
+    parser.add_argument(
+        "--gene-lambda-power-alpha",
+        type=float,
+        default=2.0,
+        help="Power-law: Pareto alpha (>1) matched to median exp(guide_lambda_log_mean) (only used when --gene-lambda-family=power_law).",
+    )
+    parser.add_argument(
+        "--guide-lambda-family",
+        type=str,
+        choices=["lognormal_noise", "dirichlet_weights"],
+        default="lognormal_noise",
+        help="Within-gene (bottom-layer) guide abundance family (default: lognormal_noise).",
+    )
+    parser.add_argument(
+        "--guide-lambda-dirichlet-alpha0",
+        type=float,
+        default=1.0,
+        help="Dirichlet weights: total concentration alpha0 (smaller => more dominance; only used when --guide-lambda-family=dirichlet_weights).",
+    )
     parser.add_argument("--depth-log-mean", type=float, default=0.0, help="log-mean of depth factor.")
     parser.add_argument("--depth-log-sd", type=float, default=1.0, help="log-sd of depth factor (order-of-magnitude variation ~ 1).")
     parser.add_argument("--depth-poisson-scale", type=float, default=0.0, help="Optional Poisson noise on depth factors (0 disables).")
@@ -1418,6 +1643,12 @@ def main() -> None:
         guide_lambda_log_mean=args.guide_lambda_log_mean,
         guide_lambda_log_sd=args.guide_lambda_log_sd,
         gene_lambda_log_sd=args.gene_lambda_log_sd,
+        gene_lambda_family=str(args.gene_lambda_family),
+        gene_lambda_mix_pi_high=float(args.gene_lambda_mix_pi_high),
+        gene_lambda_mix_delta_log_mean=float(args.gene_lambda_mix_delta_log_mean),
+        gene_lambda_power_alpha=float(args.gene_lambda_power_alpha),
+        guide_lambda_family=str(args.guide_lambda_family),
+        guide_lambda_dirichlet_alpha0=float(args.guide_lambda_dirichlet_alpha0),
         depth_log_mean=args.depth_log_mean,
         depth_log_sd=args.depth_log_sd,
         depth_poisson_scale=args.depth_poisson_scale,
