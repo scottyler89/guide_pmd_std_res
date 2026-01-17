@@ -62,7 +62,7 @@ def main() -> None:
     parser.add_argument(
         "--preset",
         type=str,
-        choices=["quick", "standard", "full"],
+        choices=["quick", "standard", "full", "abundance"],
         default=None,
         help="Optional named grid preset (applies only when the suite runs the grid).",
     )
@@ -204,6 +204,52 @@ def main() -> None:
             "500",
             "--qq-plots",
         ]
+    elif args.preset == "abundance":
+        # Focused stress-test of abundance regimes (heavy tails + within-gene dominance) without exploding the grid.
+        preset_args = [
+            "--seeds",
+            "1",
+            "2",
+            "--n-genes",
+            "500",
+            "--guides-per-gene",
+            "4",
+            "--n-control",
+            "12",
+            "--n-treatment",
+            "12",
+            "--no-include-batch-covariate",
+            "--methods",
+            "meta",
+            "stouffer",
+            "lmm",
+            "qc",
+            "--lmm-scope",
+            "meta_or_het_fdr",
+            "--lmm-max-genes-per-focal-var",
+            "500",
+            "--gene-lambda-family",
+            "lognormal",
+            "mixture_lognormal",
+            "power_law",
+            "--gene-lambda-log-sd",
+            "0.5",
+            "--gene-lambda-mix-pi-high",
+            "0.05",
+            "0.5",
+            "--gene-lambda-mix-delta-log-mean",
+            "2.5",
+            "--gene-lambda-power-alpha",
+            "1.5",
+            "--guide-lambda-family",
+            "lognormal_noise",
+            "dirichlet_weights",
+            "--guide-lambda-log-sd",
+            "0.8",
+            "--guide-lambda-dirichlet-alpha0",
+            "0.2",
+            "--qq-plots",
+        ]
 
     grid_args = preset_args + list(args.grid_args or []) + list(unknown)
     if int(args.jobs) > 0 and "--jobs" not in [str(x) for x in grid_args]:
@@ -266,7 +312,7 @@ def main() -> None:
     if grid_tsv is None:
         # For some presets, run multiple response-mode grids and concatenate.
         grid_variants: list[dict[str, object]] = []
-        if args.preset in {"standard", "full"}:
+        if args.preset in {"standard", "full", "abundance"}:
             forbidden = {"--response-mode", "--pmd-n-boot", "--normalization-mode", "--logratio-mode", "--n-reference-genes"}
             bad = [a for a in grid_args if str(a) in forbidden]
             if bad:
@@ -481,6 +527,93 @@ def main() -> None:
                         "0.0",
                         "--nb-overdispersion",
                         "0.05",
+                    ],
+                },
+            ]
+
+            grid_variants = []
+            for s in scenarios:
+                for p in processing:
+                    grid_variants.append(
+                        {
+                            "name": f"{s['name']}__{p['name']}",
+                            "extra_args": [*p["extra_args"], *s["extra_args"]],
+                        }
+                    )
+        elif args.preset == "abundance":
+            processing: list[dict[str, object]] = [
+                {
+                    "name": "log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "cpm",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "--n-reference-genes",
+                        "0",
+                    ],
+                },
+                {
+                    "name": "guide_zscore_log_counts",
+                    "extra_args": [
+                        "--response-mode",
+                        "guide_zscore_log_counts",
+                        "--normalization-mode",
+                        "none",
+                        "cpm",
+                        "--logratio-mode",
+                        "none",
+                        "clr_all",
+                        "--n-reference-genes",
+                        "0",
+                    ],
+                },
+                {"name": "pmd_std_res", "extra_args": ["--response-mode", "pmd_std_res", "--pmd-n-boot", "100"]},
+            ]
+
+            scenarios: list[dict[str, object]] = [
+                {
+                    "name": "null_depth",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "10.0",
+                        "--frac-signal",
+                        "0.0",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
+                    ],
+                },
+                {
+                    "name": "signal_depth",
+                    "extra_args": [
+                        "--n-batches",
+                        "1",
+                        "--treatment-depth-multiplier",
+                        "1.0",
+                        "10.0",
+                        "--frac-signal",
+                        "0.2",
+                        "--effect-sd",
+                        "0.5",
+                        "--offtarget-guide-frac",
+                        "0.0",
+                        "--offtarget-slope-sd",
+                        "0.0",
+                        "--nb-overdispersion",
+                        "0.0",
                     ],
                 },
             ]

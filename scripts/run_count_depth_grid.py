@@ -547,6 +547,12 @@ def main() -> None:
             "guide_lambda_log_mean": float(args.guide_lambda_log_mean),
             "guide_lambda_log_sd": float(guide_lambda_log_sd),
             "gene_lambda_log_sd": float(gene_lambda_log_sd),
+            "gene_lambda_family": str(gene_lambda_family),
+            "gene_lambda_mix_pi_high": float(gene_lambda_mix_pi_high),
+            "gene_lambda_mix_delta_log_mean": float(gene_lambda_mix_delta_log_mean),
+            "gene_lambda_power_alpha": float(gene_lambda_power_alpha),
+            "guide_lambda_family": str(guide_lambda_family),
+            "guide_lambda_dirichlet_alpha0": float(guide_lambda_dirichlet_alpha0),
             "depth_log_sd": depth_log_sd,
             "n_batches": int(n_batches),
             "batch_confounding_strength": float(batch_strength),
@@ -570,25 +576,13 @@ def main() -> None:
             "alpha": 0.05,
             "fdr_q": 0.1,
         }
-        # Preserve historical run hashes/tagging for the default abundance model.
-        if str(gene_lambda_family) != "lognormal":
-            full_cfg["gene_lambda_family"] = str(gene_lambda_family)
-            if str(gene_lambda_family) == "mixture_lognormal":
-                full_cfg["gene_lambda_mix_pi_high"] = float(gene_lambda_mix_pi_high)
-                full_cfg["gene_lambda_mix_delta_log_mean"] = float(gene_lambda_mix_delta_log_mean)
-            if str(gene_lambda_family) == "power_law":
-                full_cfg["gene_lambda_power_alpha"] = float(gene_lambda_power_alpha)
-        if str(guide_lambda_family) != "lognormal_noise":
-            full_cfg["guide_lambda_family"] = str(guide_lambda_family)
-            if str(guide_lambda_family) == "dirichlet_weights":
-                full_cfg["guide_lambda_dirichlet_alpha0"] = float(guide_lambda_dirichlet_alpha0)
         run_hash = _stable_hash(full_cfg)
 
         # Keep the directory name short to avoid filesystem path limits.
-        glf_map = {"mixture_lognormal": "mln", "power_law": "pl"}
-        guf_map = {"dirichlet_weights": "dir"}
-        glf_tag = f"__glf={glf_map.get(str(gene_lambda_family), str(gene_lambda_family))}" if str(gene_lambda_family) != "lognormal" else ""
-        guf_tag = f"__guf={guf_map.get(str(guide_lambda_family), str(guide_lambda_family))}" if str(guide_lambda_family) != "lognormal_noise" else ""
+        glf_map = {"lognormal": "ln", "mixture_lognormal": "mln", "power_law": "pl"}
+        guf_map = {"lognormal_noise": "lnn", "dirichlet_weights": "dir"}
+        glf_tag = f"__glf={glf_map.get(str(gene_lambda_family), str(gene_lambda_family))}"
+        guf_tag = f"__guf={guf_map.get(str(guide_lambda_family), str(guide_lambda_family))}"
         glf_param_tag = ""
         if str(gene_lambda_family) == "mixture_lognormal":
             glf_param_tag = f"__gpi={float(gene_lambda_mix_pi_high):g}__gdl={float(gene_lambda_mix_delta_log_mean):g}"
