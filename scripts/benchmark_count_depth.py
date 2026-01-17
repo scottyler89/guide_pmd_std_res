@@ -546,18 +546,78 @@ def _apply_logratio(
 
 
 def _compute_pmd_std_res(counts_df: pd.DataFrame, *, n_boot: int, seed: int) -> pd.DataFrame:
-    from percent_max_diff.percent_max_diff import pmd
+    # Use percent_max_diff's *core* PMD z-score computation, but avoid the library's
+    # compositional "post-hoc adjustment" step (which can be numerically fragile in
+    # sparse/dropout regimes and is not used for our downstream response matrix).
+    from percent_max_diff.percent_max_diff import cellwise_significance
+    from percent_max_diff.percent_max_diff import get_detailed_null_vects
+    from percent_max_diff.percent_max_diff import get_detailed_pmd
+
+    # percent_max_diff can error when a guide has zero variance across samples (e.g., all-zero rows),
+    # which is common in sparse/dropout regimes. Filter such rows *based on observed counts* and
+    # re-insert them as 0.0 standardized residuals (uninformative guides).
+    if counts_df.shape[0] == 0 or counts_df.shape[1] == 0:
+        out = pd.DataFrame(0.0, index=counts_df.index, columns=counts_df.columns)
+        out.attrs["pmd_input_filter"] = {"n_total": int(counts_df.shape[0]), "n_kept": 0, "n_filtered": int(counts_df.shape[0])}
+        return out
+
+    row_sum = counts_df.sum(axis=1).to_numpy(dtype=float)
+    row_min = counts_df.min(axis=1).to_numpy(dtype=float)
+    row_max = counts_df.max(axis=1).to_numpy(dtype=float)
+    keep = (row_sum > 0) & (row_max > row_min)
+
+    n_total = int(counts_df.shape[0])
+    n_kept = int(keep.sum())
+    n_filtered = int(n_total - n_kept)
+    n_all_zero = int((row_sum <= 0).sum())
+    n_constant_nonzero = int(((row_sum > 0) & (row_max <= row_min)).sum())
+
+    if n_kept == 0:
+        out = pd.DataFrame(0.0, index=counts_df.index, columns=counts_df.columns)
+        out.attrs["pmd_input_filter"] = {
+            "n_total": n_total,
+            "n_kept": n_kept,
+            "n_filtered": n_filtered,
+            "n_all_zero": n_all_zero,
+            "n_constant_nonzero": n_constant_nonzero,
+        }
+        return out
+
+    counts_in = counts_df.loc[keep].copy()
 
     # percent_max_diff uses numpy's global RNG; seed deterministically for reproducibility.
     state = np.random.get_state()
     np.random.seed(int(seed))
     try:
-        pmd_res = pmd(counts_df, num_boot=int(n_boot), skip_posthoc=True)
+        x = np.asarray(counts_in.to_numpy(dtype=float), dtype=np.int64)
+        _, resid = get_detailed_pmd(x)
+        _, null_resid = get_detailed_null_vects(x, num_boot=int(n_boot))
+        z_scores, _, _, _ = cellwise_significance(resid, null_resid)
     finally:
         np.random.set_state(state)
 
-    std_res = pmd_res.z_scores
+    std_res = pd.DataFrame(z_scores, index=counts_in.index, columns=counts_in.columns)
+    # If PMD yields NA/Inf for a guide (common in low-abundance features), discard it by
+    # forcing it to a constant 0.0 row so it is not quantified downstream.
+    z = std_res.to_numpy(dtype=float)
+    nonfinite_cell = ~np.isfinite(z)
+    invalid_guides = nonfinite_cell.any(axis=1)
+    n_guides_with_nonfinite = int(invalid_guides.sum())
+    n_nonfinite_cells = int(nonfinite_cell.sum())
+    if n_guides_with_nonfinite > 0:
+        std_res.iloc[np.where(invalid_guides)[0], :] = 0.0
+
+    std_res = std_res.reindex(index=counts_df.index, columns=counts_df.columns)
     std_res = std_res.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    std_res.attrs["pmd_input_filter"] = {
+        "n_total": n_total,
+        "n_kept": n_kept,
+        "n_filtered": n_filtered,
+        "n_all_zero": n_all_zero,
+        "n_constant_nonzero": n_constant_nonzero,
+        "n_guides_with_nonfinite": n_guides_with_nonfinite,
+        "n_nonfinite_cells": n_nonfinite_cells,
+    }
     return std_res
 
 
@@ -1103,6 +1163,8 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
         "depth_proxy": depth_qc,
         "abundance_audit": abundance_audit,
     }
+    if str(cfg.response_mode) == "pmd_std_res":
+        counts_qc["pmd_input_filter"] = dict(std_res_df.attrs.get("pmd_input_filter", {}))
 
     mm_sanity = mm.copy()
     if "Intercept" not in mm_sanity.columns:
