@@ -23,6 +23,12 @@ SCENARIO_CANDIDATE_COLS: list[str] = [
     "guide_slope_sd",
     "guide_lambda_log_sd",
     "gene_lambda_log_sd",
+    "gene_lambda_family",
+    "gene_lambda_mix_pi_high",
+    "gene_lambda_mix_delta_log_mean",
+    "gene_lambda_power_alpha",
+    "guide_lambda_family",
+    "guide_lambda_dirichlet_alpha0",
     "offtarget_guide_frac",
     "offtarget_slope_sd",
     "nb_overdispersion",
@@ -43,9 +49,20 @@ _ALIASES: dict[str, str] = {
     "guide_slope_sd": "guide_slope_sd",
     "guide_lambda_log_sd": "guide_ll_sd",
     "gene_lambda_log_sd": "gene_ll_sd",
+    "gene_lambda_family": "gene_ll_fam",
+    "gene_lambda_mix_pi_high": "mix_pi",
+    "gene_lambda_mix_delta_log_mean": "mix_dlog",
+    "gene_lambda_power_alpha": "pl_alpha",
+    "guide_lambda_family": "guide_ll_fam",
+    "guide_lambda_dirichlet_alpha0": "dir_a0",
     "offtarget_guide_frac": "ot_frac",
     "offtarget_slope_sd": "ot_sd",
     "nb_overdispersion": "nb_phi",
+}
+
+_CATEGORICAL_SCENARIO_COLS: set[str] = {
+    "gene_lambda_family",
+    "guide_lambda_family",
 }
 
 
@@ -80,7 +97,10 @@ def make_scenario_table(df: pd.DataFrame, *, exclude_cols: list[str] | None = No
 
     scenarios = df[scenario_cols].drop_duplicates().copy()
     for c in scenario_cols:
-        scenarios[c] = pd.to_numeric(scenarios[c], errors="coerce")
+        if c in _CATEGORICAL_SCENARIO_COLS:
+            scenarios[c] = scenarios[c].astype(str)
+        else:
+            scenarios[c] = pd.to_numeric(scenarios[c], errors="coerce")
 
     # Stable ordering by raw scenario params.
     sort_cols = [c for c in SCENARIO_CANDIDATE_COLS if c in scenarios.columns]
@@ -91,9 +111,13 @@ def make_scenario_table(df: pd.DataFrame, *, exclude_cols: list[str] | None = No
 
     varying: list[str] = []
     for c in scenario_cols:
-        s = pd.to_numeric(df[c], errors="coerce")
-        if int(s.dropna().nunique()) > 1:
-            varying.append(c)
+        if c in _CATEGORICAL_SCENARIO_COLS:
+            if int(df[c].astype(str).nunique(dropna=False)) > 1:
+                varying.append(c)
+        else:
+            s = pd.to_numeric(df[c], errors="coerce")
+            if int(s.dropna().nunique()) > 1:
+                varying.append(c)
 
     fs_nonzero_unique = pd.to_numeric(scenarios.loc[~scenarios["is_null"], "frac_signal"], errors="coerce").dropna().unique()
     include_fs = int(pd.to_numeric(scenarios.get("frac_signal", 0.0), errors="coerce").dropna().nunique()) > 2 or int(
@@ -128,6 +152,9 @@ def make_scenario_table(df: pd.DataFrame, *, exclude_cols: list[str] | None = No
 
         for c in varying_for_label:
             val = row.get(c)
+            if c in _CATEGORICAL_SCENARIO_COLS:
+                parts.append(f"{_ALIASES[c]}={str(val)}")
+                continue
             if c in baseline:
                 v = pd.to_numeric(val, errors="coerce")
                 v = float(v) if np.isfinite(v) else np.nan

@@ -100,6 +100,12 @@ def _row_from_report(*, tag: str, report_path: str, report: dict) -> dict[str, o
         "guide_lambda_log_mean": float(cfg["guide_lambda_log_mean"]),
         "guide_lambda_log_sd": float(cfg["guide_lambda_log_sd"]),
         "gene_lambda_log_sd": float(cfg["gene_lambda_log_sd"]),
+        "gene_lambda_family": str(cfg.get("gene_lambda_family", "lognormal")),
+        "gene_lambda_mix_pi_high": float(cfg.get("gene_lambda_mix_pi_high", 0.0)),
+        "gene_lambda_mix_delta_log_mean": float(cfg.get("gene_lambda_mix_delta_log_mean", 0.0)),
+        "gene_lambda_power_alpha": float(cfg.get("gene_lambda_power_alpha", 0.0)),
+        "guide_lambda_family": str(cfg.get("guide_lambda_family", "lognormal_noise")),
+        "guide_lambda_dirichlet_alpha0": float(cfg.get("guide_lambda_dirichlet_alpha0", 0.0)),
         "methods": ",".join([str(m) for m in cfg["methods"]]),
         "lmm_scope": str(cfg["lmm_scope"]),
         "lmm_q_meta": float(cfg["lmm_q_meta"]),
@@ -282,6 +288,50 @@ def main() -> None:
         default=[0.5],
         help="Gene-level log-sd on lambda (default: 0.5).",
     )
+    parser.add_argument(
+        "--gene-lambda-family",
+        type=str,
+        nargs="+",
+        choices=["lognormal", "mixture_lognormal", "power_law"],
+        default=["lognormal"],
+        help="Gene-level abundance family values to sweep (default: lognormal).",
+    )
+    parser.add_argument(
+        "--gene-lambda-mix-pi-high",
+        type=float,
+        nargs="+",
+        default=[0.10],
+        help="Mixture lognormal: high-component fraction values to sweep (default: 0.10).",
+    )
+    parser.add_argument(
+        "--gene-lambda-mix-delta-log-mean",
+        type=float,
+        nargs="+",
+        default=[2.0],
+        help="Mixture lognormal: delta log-mean separation values to sweep (default: 2.0).",
+    )
+    parser.add_argument(
+        "--gene-lambda-power-alpha",
+        type=float,
+        nargs="+",
+        default=[2.0],
+        help="Power-law: Pareto alpha values to sweep (>1; default: 2.0).",
+    )
+    parser.add_argument(
+        "--guide-lambda-family",
+        type=str,
+        nargs="+",
+        choices=["lognormal_noise", "dirichlet_weights"],
+        default=["lognormal_noise"],
+        help="Within-gene guide abundance family values to sweep (default: lognormal_noise).",
+    )
+    parser.add_argument(
+        "--guide-lambda-dirichlet-alpha0",
+        type=float,
+        nargs="+",
+        default=[1.0],
+        help="Dirichlet weights: alpha0 values to sweep (default: 1.0).",
+    )
     parser.add_argument("--depth-log-sd", type=float, nargs="+", default=[1.0], help="Depth log-sd values (default: 1.0).")
     parser.add_argument("--n-batches", type=int, nargs="+", default=[1], help="Number of batches (supports 1 or 2; default: 1).")
     parser.add_argument(
@@ -430,8 +480,14 @@ def main() -> None:
         frac_signal,
         effect_sd,
         guide_slope_sd,
+        gene_lambda_family,
+        gene_lambda_mix_pi_high,
+        gene_lambda_mix_delta_log_mean,
+        gene_lambda_power_alpha,
         gene_lambda_log_sd,
         guide_lambda_log_sd,
+        guide_lambda_family,
+        guide_lambda_dirichlet_alpha0,
         ot_frac,
         ot_sd,
         nb_overdispersion,
@@ -458,8 +514,14 @@ def main() -> None:
         [float(x) for x in args.frac_signal],
         [float(x) for x in args.effect_sd],
         [float(x) for x in args.guide_slope_sd],
+        [str(x) for x in args.gene_lambda_family],
+        [float(x) for x in args.gene_lambda_mix_pi_high],
+        [float(x) for x in args.gene_lambda_mix_delta_log_mean],
+        [float(x) for x in args.gene_lambda_power_alpha],
         [float(x) for x in args.gene_lambda_log_sd],
         [float(x) for x in args.guide_lambda_log_sd],
+        [str(x) for x in args.guide_lambda_family],
+        [float(x) for x in args.guide_lambda_dirichlet_alpha0],
         [float(x) for x in args.offtarget_guide_frac],
         [float(x) for x in args.offtarget_slope_sd],
         [float(x) for x in args.nb_overdispersion],
@@ -471,7 +533,7 @@ def main() -> None:
         depth_tag = "logls" if bool(include_depth) else "none"
         batch_tag = int(bool(include_batch))
 
-        full_cfg = {
+        full_cfg: dict[str, object] = {
             "seed": seed,
             "response_mode": str(args.response_mode),
             "pmd_n_boot": int(args.pmd_n_boot),
@@ -508,9 +570,31 @@ def main() -> None:
             "alpha": 0.05,
             "fdr_q": 0.1,
         }
+        # Preserve historical run hashes/tagging for the default abundance model.
+        if str(gene_lambda_family) != "lognormal":
+            full_cfg["gene_lambda_family"] = str(gene_lambda_family)
+            if str(gene_lambda_family) == "mixture_lognormal":
+                full_cfg["gene_lambda_mix_pi_high"] = float(gene_lambda_mix_pi_high)
+                full_cfg["gene_lambda_mix_delta_log_mean"] = float(gene_lambda_mix_delta_log_mean)
+            if str(gene_lambda_family) == "power_law":
+                full_cfg["gene_lambda_power_alpha"] = float(gene_lambda_power_alpha)
+        if str(guide_lambda_family) != "lognormal_noise":
+            full_cfg["guide_lambda_family"] = str(guide_lambda_family)
+            if str(guide_lambda_family) == "dirichlet_weights":
+                full_cfg["guide_lambda_dirichlet_alpha0"] = float(guide_lambda_dirichlet_alpha0)
         run_hash = _stable_hash(full_cfg)
 
         # Keep the directory name short to avoid filesystem path limits.
+        glf_map = {"mixture_lognormal": "mln", "power_law": "pl"}
+        guf_map = {"dirichlet_weights": "dir"}
+        glf_tag = f"__glf={glf_map.get(str(gene_lambda_family), str(gene_lambda_family))}" if str(gene_lambda_family) != "lognormal" else ""
+        guf_tag = f"__guf={guf_map.get(str(guide_lambda_family), str(guide_lambda_family))}" if str(guide_lambda_family) != "lognormal_noise" else ""
+        glf_param_tag = ""
+        if str(gene_lambda_family) == "mixture_lognormal":
+            glf_param_tag = f"__gpi={float(gene_lambda_mix_pi_high):g}__gdl={float(gene_lambda_mix_delta_log_mean):g}"
+        if str(gene_lambda_family) == "power_law":
+            glf_param_tag = f"__gpa={float(gene_lambda_power_alpha):g}"
+        guf_param_tag = f"__ga0={float(guide_lambda_dirichlet_alpha0):g}" if str(guide_lambda_family) == "dirichlet_weights" else ""
         tag = (
             f"s={seed}"
             f"__rm={args.response_mode}"
@@ -523,6 +607,7 @@ def main() -> None:
             f"__ns={int(n_control)+int(n_treatment)}"
             f"__tdm={tdm}"
             f"__fs={frac_signal}"
+            f"{glf_tag}{glf_param_tag}{guf_tag}{guf_param_tag}"
             f"__lmm={lmm_scope}"
             f"__cap={cap_tag}"
             f"__h={run_hash}"
@@ -547,6 +632,18 @@ def main() -> None:
             str(float(guide_lambda_log_sd)),
             "--gene-lambda-log-sd",
             str(float(gene_lambda_log_sd)),
+            "--gene-lambda-family",
+            str(gene_lambda_family),
+            "--gene-lambda-mix-pi-high",
+            str(float(gene_lambda_mix_pi_high)),
+            "--gene-lambda-mix-delta-log-mean",
+            str(float(gene_lambda_mix_delta_log_mean)),
+            "--gene-lambda-power-alpha",
+            str(float(gene_lambda_power_alpha)),
+            "--guide-lambda-family",
+            str(guide_lambda_family),
+            "--guide-lambda-dirichlet-alpha0",
+            str(float(guide_lambda_dirichlet_alpha0)),
             "--depth-log-sd",
             str(depth_log_sd),
             "--n-batches",
@@ -683,7 +780,13 @@ def main() -> None:
         "effect_sd",
         "guide_slope_sd",
         "gene_lambda_log_sd",
+        "gene_lambda_family",
+        "gene_lambda_mix_pi_high",
+        "gene_lambda_mix_delta_log_mean",
+        "gene_lambda_power_alpha",
         "guide_lambda_log_sd",
+        "guide_lambda_family",
+        "guide_lambda_dirichlet_alpha0",
         "offtarget_guide_frac",
         "offtarget_slope_sd",
         "nb_overdispersion",
