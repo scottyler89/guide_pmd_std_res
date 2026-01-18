@@ -289,6 +289,9 @@ def _run_one(
         "include_batch_covariate",
         "lmm_scope",
         "lmm_max_genes_per_focal_var",
+        # Thresholds (kept explicit; used in derived dev/excess metrics)
+        "alpha",
+        "fdr_q",
         # Scenario knobs
         *[c for c in SCENARIO_CANDIDATE_COLS if c in row.index],
         # Seed/repro
