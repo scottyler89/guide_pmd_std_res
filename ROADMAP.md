@@ -456,3 +456,57 @@ Phase E — Visualization + reporting (statistician-first)
   - [x] one-page “scenario audit” panel (rank-abundance + distributions): `scripts/plot_count_depth_abundance_scenarios.py`
   - [x] run by default for `--preset abundance`: `scripts/run_count_depth_benchmark_suite.py`
   - [x] keep pipelines in rows; scenario×metric in columns; avoid any null/signal averaging (benchmark-wide invariant)
+
+#### P4.9 — Expected-Count Quantifiability (E) Buckets (Observed-only; depth-confounding-safe)
+Goal: add a statistically grounded “is this gene/sample cell quantifiable?” layer based on **chi-square expected counts**,
+so benchmark metrics can be stratified by low- vs high-information regimes (incl. treatment-confounded depth).
+
+Key constraints:
+- Use **observed counts only** (empirical library sizes from the simulated counts); never use oracle depth factors.
+- Keep all existing benchmark artifacts stable; quantifiability outputs must be **additive** (new files / new optional metrics).
+- Persist enough to support later **re-binning** and continuous association work without rerunning expensive benchmark grids.
+
+Phase A — Definitions + output schema (SSoT)
+- [ ] Define the expected-count construction per condition `c ∈ {control, treatment}`:
+  - [ ] Collapse guide counts → gene counts: `y[g,s] = sum_{guides in g} counts[guide,s]`.
+  - [ ] For each condition `c`, compute the chi-square expected table:
+    - [ ] `Y_g(c) = sum_{s∈S_c} y[g,s]`
+    - [ ] `d_s(c) = sum_g y[g,s]` (empirical libsize within `c`)
+    - [ ] `D(c) = sum_{s∈S_c} d_s(c)`
+    - [ ] `E[g,s|c] = Y_g(c) * d_s(c) / D(c)`
+- [ ] Define a robust gene-level “quantifiability driver”:
+  - [ ] `E_ctrl_p10(g)` and `E_trt_p10(g)` (10th percentile across samples within each condition)
+  - [ ] `E_p10_mincond(g) = min(E_ctrl_p10(g), E_trt_p10(g))`
+- [ ] Define reporting buckets (consumer-layer policy; parameterized):
+  - [ ] `E_p10_mincond < 1`, `1–<3`, `3–<5`, `>=5` (classic chi-square headroom cutoffs).
+
+Phase B — Core utilities (pure; testable)
+- [ ] Add a small core module for:
+  - [ ] collapsing guide→gene counts
+  - [ ] chi-square expected-count computation
+  - [ ] expected-count summaries (min/mean/quantiles) used by the benchmark
+
+Phase C — Per-run artifacts (additive; no reruns required)
+- [ ] Write per-run quantifiability artifacts alongside other `sim_*` inputs:
+  - [ ] `sim_gene_expected_counts.tsv` (per-gene summaries + buckets; includes `Y_ctrl`, `Y_trt`, `E_*` summaries)
+  - [ ] `sim_gene_expected_counts_matrix.tsv.gz` (long table: `gene_id, sample_id, treatment, observed_count, expected_count`)
+- [ ] Ensure these never overwrite other artifacts unless explicitly forced.
+
+Phase D — Backfill / resume (no benchmark reruns)
+- [ ] Add a “backfill” script that scans existing run directories (via `--grid-tsv` or `--root`) and writes any missing
+      expected-count artifacts with `--resume` semantics.
+- [ ] Parallelize backfill safely (`--jobs N`); deterministic outputs; stable ordering.
+
+Phase E — Rehydrate inputs (deterministic; avoid PMD recompute)
+- [ ] Add a “rehydrate” script that can recreate missing `sim_counts.tsv`, `sim_truth_*.tsv`, and `sim_model_matrix.tsv`
+      from `benchmark_report.json` config + seed, **without** recomputing PMD standardized residuals by default.
+- [ ] Refuse to overwrite existing files unless `--force`.
+
+Phase F — Bucket-stratified benchmark reporting (statistician-first)
+- [ ] Compute benchmark metrics stratified by `E_p10_mincond` bucket:
+  - [ ] calibration metrics on **null genes only** (e.g., KS/uniformity summaries, QQ `lambda_gc`)
+  - [ ] power/TPR on **signal genes only**, plus FDR/FPR (avoid any null/signal pooling)
+  - [ ] confusion-matrix metrics (balanced accuracy, MCC) as secondary summaries (clearly labeled)
+- [ ] Emit a long-format TSV (to avoid column explosion) keyed by:
+  - [ ] `pipeline_id`, `scenario_id`, `metric`, `bucket`, `value`, `n_genes`
+- [ ] Update scorecards/heatmaps to treat **pipelines as rows** and **scenario×metric×bucket** as columns (no averaging).
