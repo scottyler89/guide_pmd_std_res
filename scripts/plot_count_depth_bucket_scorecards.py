@@ -83,6 +83,70 @@ def main() -> None:
         null_df = sub.loc[sub["is_null"].astype(bool)].copy() if "is_null" in sub.columns else pd.DataFrame()
         sig_df = sub.loc[~sub["is_null"].astype(bool)].copy() if "is_null" in sub.columns else pd.DataFrame()
 
+        # Scenario×metric grid (pipelines as rows; scenario metrics as columns).
+        scenario_metric_specs: list[MetricSpec] = []
+        pipelines = sorted(sub["pipeline"].dropna().astype(str).unique().tolist())
+        grid = pd.DataFrame({"pipeline": pipelines})
+
+        scenarios = (
+            sub[["scenario_id", "scenario", "is_null"]]
+            .drop_duplicates()
+            .sort_values(["is_null", "scenario", "scenario_id"], kind="mergesort")
+            .reset_index(drop=True)
+        )
+        for s in scenarios.itertuples(index=False):
+            scen_label = str(getattr(s, "scenario"))
+            is_null = bool(getattr(s, "is_null"))
+            if is_null:
+                metrics = [
+                    ("null_lambda_gc_dev", "lower", "lambda_gc_dev"),
+                    ("alpha_fpr_dev", "lower", "alpha_fpr_dev"),
+                    ("null_ks", "lower", "ks"),
+                    ("coverage_p_frac", "higher", "coverage"),
+                ]
+            else:
+                metrics = [
+                    ("q_fdr_excess", "lower", "q_fdr_excess"),
+                    ("q_tpr", "higher", "q_tpr"),
+                    ("q_balanced_accuracy", "higher", "q_balacc"),
+                    ("q_mcc", "higher", "q_mcc"),
+                    ("coverage_p_frac", "higher", "coverage"),
+                ]
+
+            scen_df = sub.loc[sub["scenario"].astype(str) == scen_label].copy()
+            for col, direction, short in metrics:
+                label = f"{scen_label} | {short}"
+                if col in scen_df.columns:
+                    vals = pd.to_numeric(scen_df[col], errors="coerce")
+                else:
+                    vals = pd.Series([np.nan] * scen_df.shape[0], index=scen_df.index, dtype=float)
+                agg = vals.groupby(scen_df["pipeline"].astype(str)).mean()
+                grid[label] = pd.to_numeric(agg.reindex(pipelines), errors="coerce").to_numpy(dtype=float)
+                scenario_metric_specs.append(MetricSpec(label, direction))
+
+        if scenario_metric_specs:
+            grid_rank_avg = _dot_scorecard(
+                grid,
+                pipeline_col="pipeline",
+                metric_specs=scenario_metric_specs,
+                out_path=os.path.join(args.out_dir, f"bucket={bucket}__method_grid__sort=avg.png"),
+                title=f"Bucket pipeline grid — scenario metric ranks — bucket={bucket} (sorted by avg)",
+                sort_mode="avg",
+            )
+            grid_rank_worst = _dot_scorecard(
+                grid,
+                pipeline_col="pipeline",
+                metric_specs=scenario_metric_specs,
+                out_path=os.path.join(args.out_dir, f"bucket={bucket}__method_grid__sort=worst.png"),
+                title=f"Bucket pipeline grid — scenario metric ranks — bucket={bucket} (sorted by worst)",
+                sort_mode="worst",
+            )
+            if int(args.max_pipelines) > 0:
+                grid_rank_avg = grid_rank_avg.head(int(args.max_pipelines))
+                grid_rank_worst = grid_rank_worst.head(int(args.max_pipelines))
+            grid_rank_avg.to_csv(os.path.join(args.out_dir, f"bucket={bucket}__method_grid__sort=avg.tsv"), sep="\t", index=False)
+            grid_rank_worst.to_csv(os.path.join(args.out_dir, f"bucket={bucket}__method_grid__sort=worst.tsv"), sep="\t", index=False)
+
         if not null_df.empty:
             null_agg = _worst_case_across_scenarios(
                 null_df,
@@ -144,4 +208,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
