@@ -10,6 +10,7 @@ import pandas as pd
 
 from count_depth_scenarios import attach_scenarios
 from count_depth_scenarios import make_scenario_table
+from count_depth_pipelines import pipeline_label
 
 
 def _require_matplotlib():
@@ -414,23 +415,6 @@ def _plot_pareto_runtime_vs_tpr(
     plt.close(fig)
 
 
-def _pipeline_label(row: pd.Series, *, method: str) -> str:
-    rm = str(row.get("response_mode", ""))
-    norm = str(row.get("normalization_mode", ""))
-    lr = str(row.get("logratio_mode", ""))
-    depth = str(row.get("depth_covariate_mode", ""))
-    batch_cov = int(bool(row.get("include_batch_covariate", False)))
-
-    parts = [method, f"resp={rm}", f"norm={norm}", f"lr={lr}", f"depthcov={depth}", f"batchcov={batch_cov}"]
-    if method.startswith("lmm_"):
-        scope = str(row.get("lmm_scope", ""))
-        cap = row.get("lmm_max_genes_per_focal_var", None)
-        cap_s = "0" if cap in (None, "", 0) else str(int(cap))
-        parts.append(f"scope={scope}")
-        parts.append(f"lmm_cap={cap_s}")
-    return " | ".join(parts)
-
-
 def _extract_long(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
 
@@ -489,7 +473,7 @@ def _extract_long(df: pd.DataFrame) -> pd.DataFrame:
             row = pd.Series(r._asdict())
             out: dict[str, object] = {c: row.get(c) for c in base_cols}
             out["method"] = method
-            out["pipeline"] = _pipeline_label(row, method=method)
+            out["pipeline"] = pipeline_label(row, method=method)
             out["runtime_sec"] = row.get(runtime_col, np.nan)
 
             out["null_lambda_gc"] = row.get(f"{prefix}_null_lambda_gc", np.nan)
