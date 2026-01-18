@@ -503,10 +503,29 @@ Phase E — Rehydrate inputs (deterministic; avoid PMD recompute)
 - [x] Refuse to overwrite existing files unless `--force`.
 
 Phase F — Bucket-stratified benchmark reporting (statistician-first)
-- [ ] Compute benchmark metrics stratified by `E_p10_mincond` bucket:
-  - [ ] calibration metrics on **null genes only** (e.g., KS/uniformity summaries, QQ `lambda_gc`)
-  - [ ] power/TPR on **signal genes only**, plus FDR/FPR (avoid any null/signal pooling)
-  - [ ] confusion-matrix metrics (balanced accuracy, MCC) as secondary summaries (clearly labeled)
-- [ ] Emit a long-format TSV (to avoid column explosion) keyed by:
-  - [ ] `pipeline_id`, `scenario_id`, `metric`, `bucket`, `value`, `n_genes`
-- [ ] Update scorecards/heatmaps to treat **pipelines as rows** and **scenario×metric×bucket** as columns (no averaging).
+- [ ] Define evaluation set invariants (explicit; no oracle):
+  - [ ] Exclude reference genes from evaluation by default (keeps `n_genes` comparable across pipelines with different `n_reference_genes`).
+  - [ ] Use `expected_p10_mincond_bucket` from `sim_gene_expected_counts.tsv` as the stratification key (no recomputation in plotting).
+- [ ] Implement a bucket-metrics collector (consumer-only; no reruns):
+  - [ ] Script: `scripts/collect_count_depth_bucket_metrics.py`
+  - [ ] Input: `count_depth_grid_summary.tsv` (must include `report_path`)
+  - [ ] Output: `count_depth_bucket_metrics.tsv` (long format; one row per metric)
+  - [ ] Core columns:
+    - [ ] pipeline knobs (response/norm/logratio/depthcov/batchcov; plus LMM selection knobs)
+    - [ ] scenario knobs (from `SCENARIO_CANDIDATE_COLS`)
+    - [ ] `pipeline`, `method`, `bucket`, `metric`, `value`, `n_genes`
+  - [ ] Metrics per bucket must be computed with statistician-first semantics:
+    - [ ] null-only calibration metrics: KS-uniform, `lambda_gc`, `P(p<alpha)` (raw p-values)
+    - [ ] signal-only power metrics: `TPR(p<alpha)`, `TPR(q<q*)` (raw p + BH-adjusted p)
+    - [ ] confusion-matrix metrics (balanced accuracy, MCC, FDR, FPR, etc.) computed within the bucket (clearly labeled)
+    - [ ] coverage metrics (fraction of genes with finite p-values) so “missing p” never looks like “good behavior”
+- [ ] Integrate into the suite runner (default-on; additive):
+  - [ ] Ensure expected-count artifacts exist (run `scripts/backfill_sim_gene_expected_counts.py --grid-tsv ... --resume`)
+  - [ ] Run the collector and write `count_depth_bucket_metrics.tsv` under the suite `--out-dir`
+  - [ ] Record commands + paths in `suite_manifest.json`
+- [ ] Add bucket-stratified scorecards/figures (consumer-only; avoid column explosion):
+  - [ ] Script: `scripts/plot_count_depth_bucket_scorecards.py`
+  - [ ] Produce one scorecard per bucket (pipelines in rows; scenario×metric columns) and a compact “worst-case across scenarios” summary.
+- [ ] Tests (fast; deterministic):
+  - [ ] Smoke test: collector writes a non-empty TSV for a tiny grid with real run dirs.
+  - [ ] Smoke test: bucket scorecard script runs on a tiny synthetic TSV (matplotlib optional).
