@@ -19,6 +19,10 @@ from guide_pmd.gene_level import compute_gene_meta
 from guide_pmd.gene_level_lmm import compute_gene_lmm
 from guide_pmd.gene_level_qc import compute_gene_qc
 from guide_pmd.gene_level_stouffer import compute_gene_stouffer
+from guide_pmd.expected_counts import bucket_expected_counts
+from guide_pmd.expected_counts import chisq_expected_counts
+from guide_pmd.expected_counts import collapse_guide_counts_to_gene_counts
+from guide_pmd.expected_counts import summarize_expected_counts
 
 
 def _ks_uniform(p: pd.Series) -> dict[str, float | None]:
@@ -1140,6 +1144,62 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
     truth_sample.to_csv(truth_sample_path, sep="\t", index=False)
     truth_gene.to_csv(truth_path, sep="\t", index=False)
     truth_guide.to_csv(truth_guide_path, sep="\t", index=False)
+
+    # Expected-count quantifiability outputs (additive).
+    gene_counts = collapse_guide_counts_to_gene_counts(counts_df, ann_df["gene_symbol"])
+    treatment = pd.to_numeric(mm["treatment"], errors="coerce")
+    if treatment.isna().any():
+        raise ValueError("model_matrix column 'treatment' must be numeric and non-missing")
+    ctrl_cols = treatment.index[treatment.to_numpy(dtype=float) <= 0.0].astype(str).tolist()
+    trt_cols = treatment.index[treatment.to_numpy(dtype=float) > 0.0].astype(str).tolist()
+    expected_ctrl = chisq_expected_counts(gene_counts.reindex(columns=ctrl_cols))
+    expected_trt = chisq_expected_counts(gene_counts.reindex(columns=trt_cols))
+
+    ctrl_summ = summarize_expected_counts(expected_ctrl, quantiles=(0.1,)).add_prefix("ctrl_")
+    trt_summ = summarize_expected_counts(expected_trt, quantiles=(0.1,)).add_prefix("trt_")
+    out_summ = pd.DataFrame(index=gene_counts.index.copy())
+    out_summ["y_ctrl_sum"] = gene_counts.reindex(columns=ctrl_cols).sum(axis=1).astype(float)
+    out_summ["y_trt_sum"] = gene_counts.reindex(columns=trt_cols).sum(axis=1).astype(float)
+    out_summ = out_summ.join(ctrl_summ, how="left").join(trt_summ, how="left")
+    out_summ["expected_p10_mincond"] = np.minimum(out_summ["ctrl_expected_p10"], out_summ["trt_expected_p10"]).astype(float)
+    out_summ["expected_p10_mincond_bucket"] = bucket_expected_counts(out_summ["expected_p10_mincond"]).astype(object)
+    out_summ = out_summ.reset_index().rename(columns={"gene_id": "gene_id"})
+
+    expected_summ_path = os.path.join(out_dir, "sim_gene_expected_counts.tsv")
+    out_summ.to_csv(expected_summ_path, sep="\t", index=False)
+
+    expected_matrix_path = os.path.join(out_dir, "sim_gene_expected_counts_matrix.tsv.gz")
+    ctrl_long = (
+        expected_ctrl.stack(dropna=False)
+        .rename("expected_count")
+        .rename_axis(index=["gene_id", "sample_id"])
+        .to_frame()
+        .join(
+            gene_counts.reindex(columns=ctrl_cols)
+            .stack(dropna=False)
+            .rename("observed_count")
+            .rename_axis(index=["gene_id", "sample_id"])
+        )
+        .reset_index()
+    )
+    ctrl_long["treatment"] = 0.0
+    trt_long = (
+        expected_trt.stack(dropna=False)
+        .rename("expected_count")
+        .rename_axis(index=["gene_id", "sample_id"])
+        .to_frame()
+        .join(
+            gene_counts.reindex(columns=trt_cols)
+            .stack(dropna=False)
+            .rename("observed_count")
+            .rename_axis(index=["gene_id", "sample_id"])
+        )
+        .reset_index()
+    )
+    trt_long["treatment"] = 1.0
+    expected_long = pd.concat([ctrl_long, trt_long], axis=0, ignore_index=True, sort=False)
+    expected_long = expected_long[["gene_id", "sample_id", "treatment", "observed_count", "expected_count"]]
+    expected_long.to_csv(expected_matrix_path, sep="\t", index=False, compression="gzip")
 
     abundance_audit = _compute_abundance_audit(truth_gene, truth_guide, counts_df)
     abundance_audit_path = os.path.join(out_dir, "sim_abundance_audit.json")
