@@ -125,3 +125,93 @@ def bucket_expected_counts(
     labels = [f"<{ts[0]:g}", f"{ts[0]:g}-<{ts[1]:g}", f"{ts[1]:g}-<{ts[2]:g}", f">={ts[2]:g}"]
     return pd.cut(s, bins=bins, labels=labels, right=False, include_lowest=True)
 
+
+def compute_two_group_expected_count_quantifiability(
+    gene_counts: pd.DataFrame,
+    treatment: pd.Series,
+    *,
+    quantile: float = 0.1,
+    bucket_thresholds: Sequence[float] = (1.0, 3.0, 5.0),
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Expected-count quantifiability for two groups: control (treatment<=0) vs treatment (treatment>0).
+
+    Returns
+    -------
+    gene_summary:
+        Indexed by gene_id, with `y_*_sum`, expected-count summaries per group, and
+        `expected_pXX_mincond` + bucket label.
+    expected_long:
+        Long table with columns: gene_id, sample_id, treatment, observed_count, expected_count.
+    """
+    if gene_counts.index.has_duplicates:
+        raise ValueError("gene_counts index must not contain duplicates (gene_id)")
+
+    treatment = pd.to_numeric(treatment, errors="coerce")
+    treatment = treatment.reindex(gene_counts.columns)
+    if treatment.isna().any():
+        missing = treatment.index[treatment.isna()].astype(str).tolist()
+        raise ValueError(f"treatment missing or non-numeric for {len(missing)} sample(s), e.g. {missing[:5]}")
+
+    q = float(quantile)
+    if not (0.0 <= q <= 1.0):
+        raise ValueError("quantile must be in [0, 1]")
+    q_name = int(round(q * 100))
+
+    ctrl_cols = treatment.index[treatment.to_numpy(dtype=float) <= 0.0].astype(str).tolist()
+    trt_cols = treatment.index[treatment.to_numpy(dtype=float) > 0.0].astype(str).tolist()
+
+    counts_ctrl = gene_counts.reindex(columns=ctrl_cols)
+    counts_trt = gene_counts.reindex(columns=trt_cols)
+    expected_ctrl = chisq_expected_counts(counts_ctrl)
+    expected_trt = chisq_expected_counts(counts_trt)
+
+    ctrl_summ = summarize_expected_counts(expected_ctrl, quantiles=(q,)).add_prefix("ctrl_")
+    trt_summ = summarize_expected_counts(expected_trt, quantiles=(q,)).add_prefix("trt_")
+
+    summary = pd.DataFrame(index=gene_counts.index.copy())
+    summary["y_ctrl_sum"] = counts_ctrl.sum(axis=1).astype(float)
+    summary["y_trt_sum"] = counts_trt.sum(axis=1).astype(float)
+    summary = summary.join(ctrl_summ, how="left").join(trt_summ, how="left")
+
+    ctrl_p = f"ctrl_expected_p{q_name:02d}"
+    trt_p = f"trt_expected_p{q_name:02d}"
+    summary[f"expected_p{q_name:02d}_mincond"] = np.minimum(summary[ctrl_p], summary[trt_p]).astype(float)
+    summary[f"expected_p{q_name:02d}_mincond_bucket"] = bucket_expected_counts(
+        summary[f"expected_p{q_name:02d}_mincond"], thresholds=bucket_thresholds
+    ).astype(object)
+
+    def _stack(df: pd.DataFrame) -> pd.Series:
+        try:
+            return df.stack(future_stack=True)  # pandas>=2.1 (dropna/sort removed)
+        except TypeError:  # pragma: no cover - pandas<2.1
+            return df.stack(dropna=False)
+
+    def _long(expected: pd.DataFrame, observed: pd.DataFrame, *, t: float) -> pd.DataFrame:
+        out = (
+            _stack(expected)
+            .rename("expected_count")
+            .rename_axis(index=["gene_id", "sample_id"])
+            .to_frame()
+            .join(
+                _stack(observed)
+                .rename("observed_count")
+                .rename_axis(index=["gene_id", "sample_id"])
+            )
+            .reset_index()
+        )
+        out["treatment"] = float(t)
+        return out
+
+    expected_long = pd.concat(
+        [
+            _long(expected_ctrl, counts_ctrl, t=0.0),
+            _long(expected_trt, counts_trt, t=1.0),
+        ],
+        axis=0,
+        ignore_index=True,
+        sort=False,
+    )
+    expected_long = expected_long[["gene_id", "sample_id", "treatment", "observed_count", "expected_count"]]
+
+    return summary, expected_long
