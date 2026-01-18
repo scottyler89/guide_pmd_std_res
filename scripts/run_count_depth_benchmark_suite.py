@@ -113,6 +113,12 @@ def main() -> None:
         default=False,
         help="If enabled, generate heatmap panels (can produce many files; default: disabled).",
     )
+    parser.add_argument(
+        "--bucket-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="If enabled, compute expected-count bucket-stratified metrics + scorecards (default: enabled).",
+    )
     args, unknown = parser.parse_known_args()
     unknown = [a for a in unknown if a != "--"]
     preset_args: list[str] = []
@@ -717,6 +723,49 @@ def main() -> None:
     manifest["commands"]["plot_p_hist"] = cmd
     _run(cmd)
     manifest["paths"]["figures_p_hist_dir"] = fig_p_hist
+
+    if bool(args.bucket_metrics):
+        # Ensure expected-count artifacts exist for any pre-existing suites (additive backfill; no reruns).
+        backfill_cmd = [
+            sys.executable,
+            _script_path("backfill_sim_gene_expected_counts.py"),
+            "--grid-tsv",
+            grid_tsv,
+            "--resume",
+        ]
+        if int(args.jobs) > 0:
+            backfill_cmd.extend(["--jobs", str(int(args.jobs))])
+        manifest["commands"]["backfill_expected_counts"] = backfill_cmd
+        _run(backfill_cmd)
+
+        bucket_tsv = os.path.join(out_dir, "count_depth_bucket_metrics.tsv")
+        cmd = [
+            sys.executable,
+            _script_path("collect_count_depth_bucket_metrics.py"),
+            "--grid-tsv",
+            grid_tsv,
+            "--out-tsv",
+            bucket_tsv,
+        ]
+        if int(args.jobs) > 0:
+            cmd.extend(["--jobs", str(int(args.jobs))])
+        manifest["commands"]["bucket_metrics"] = cmd
+        _run(cmd)
+        manifest["paths"]["bucket_metrics_tsv"] = bucket_tsv
+
+        fig_bucket = os.path.join(fig_root, "bucket_scorecards")
+        os.makedirs(fig_bucket, exist_ok=True)
+        cmd = [
+            sys.executable,
+            _script_path("plot_count_depth_bucket_scorecards.py"),
+            "--bucket-metrics-tsv",
+            bucket_tsv,
+            "--out-dir",
+            fig_bucket,
+        ]
+        manifest["commands"]["plot_bucket_scorecards"] = cmd
+        _run(cmd)
+        manifest["paths"]["figures_bucket_scorecards_dir"] = fig_bucket
 
     if str(args.preset) == "abundance":
         fig_abundance = os.path.join(fig_root, "abundance_audit")
