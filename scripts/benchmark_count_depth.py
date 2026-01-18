@@ -984,7 +984,6 @@ def _compute_abundance_audit(
 
     log_lambda_gene = pd.to_numeric(truth_gene.get("log_lambda_gene"), errors="coerce").to_numpy(dtype=float)
     lambda_guide = pd.to_numeric(truth_guide.get("lambda_base"), errors="coerce").to_numpy(dtype=float)
-    log_lambda_guide = pd.to_numeric(truth_guide.get("log_lambda_guide"), errors="coerce").to_numpy(dtype=float)
 
     gene_total = truth_guide.groupby("gene_id")["lambda_base"].sum()
     gene_total = pd.to_numeric(gene_total, errors="coerce").to_numpy(dtype=float)
