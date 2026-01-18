@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -22,8 +23,8 @@ def pipeline_label(row: pd.Series, *, method: str) -> str:
     if str(method).startswith("lmm_"):
         scope = str(row.get("lmm_scope", ""))
         cap = row.get("lmm_max_genes_per_focal_var", None)
-        cap_s = "0" if cap in (None, "", 0) else str(int(cap))
+        cap_num = pd.to_numeric(pd.Series([cap]), errors="coerce").iloc[0]
+        cap_s = "0" if (not np.isfinite(cap_num) or float(cap_num) <= 0.0) else str(int(cap_num))
         parts.append(f"scope={scope}")
         parts.append(f"lmm_cap={cap_s}")
     return " | ".join(parts)
-
