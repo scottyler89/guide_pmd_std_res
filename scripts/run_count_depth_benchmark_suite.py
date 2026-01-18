@@ -725,47 +725,71 @@ def main() -> None:
     manifest["paths"]["figures_p_hist_dir"] = fig_p_hist
 
     if bool(args.bucket_metrics):
-        # Ensure expected-count artifacts exist for any pre-existing suites (additive backfill; no reruns).
-        backfill_cmd = [
-            sys.executable,
-            _script_path("backfill_sim_gene_expected_counts.py"),
-            "--grid-tsv",
-            grid_tsv,
-            "--resume",
-        ]
-        if int(args.jobs) > 0:
-            backfill_cmd.extend(["--jobs", str(int(args.jobs))])
-        manifest["commands"]["backfill_expected_counts"] = backfill_cmd
-        _run(backfill_cmd)
+        # Bucket metrics require real run directories (sim_* inputs + per-method TSVs).
+        # If a user provides a synthetic/minimal grid TSV (e.g. for plot testing), skip cleanly.
+        bucket_ok = False
+        try:
+            grid_df = pd.read_csv(grid_tsv, sep="\t")
+            if "report_path" in grid_df.columns:
+                paths = grid_df["report_path"].astype(str).dropna().tolist()
+                needed = ["sim_counts.tsv", "sim_model_matrix.tsv", "sim_truth_gene.tsv"]
+                bucket_ok = True
+                for p in paths:
+                    run_dir = os.path.dirname(str(p))
+                    if not all(os.path.isfile(os.path.join(run_dir, n)) for n in needed):
+                        bucket_ok = False
+                        break
+        except Exception:
+            bucket_ok = False
 
-        bucket_tsv = os.path.join(out_dir, "count_depth_bucket_metrics.tsv")
-        cmd = [
-            sys.executable,
-            _script_path("collect_count_depth_bucket_metrics.py"),
-            "--grid-tsv",
-            grid_tsv,
-            "--out-tsv",
-            bucket_tsv,
-        ]
-        if int(args.jobs) > 0:
-            cmd.extend(["--jobs", str(int(args.jobs))])
-        manifest["commands"]["bucket_metrics"] = cmd
-        _run(cmd)
-        manifest["paths"]["bucket_metrics_tsv"] = bucket_tsv
+        if not bucket_ok:
+            print(
+                "bucket metrics: skipped (grid TSV report_path entries do not appear to point to full benchmark run dirs); "
+                "rerun with a real suite grid or pass --no-bucket-metrics to silence this.",
+                file=sys.stderr,
+            )
+        else:
+            # Ensure expected-count artifacts exist for any pre-existing suites (additive backfill; no reruns).
+            backfill_cmd = [
+                sys.executable,
+                _script_path("backfill_sim_gene_expected_counts.py"),
+                "--grid-tsv",
+                grid_tsv,
+                "--resume",
+            ]
+            if int(args.jobs) > 0:
+                backfill_cmd.extend(["--jobs", str(int(args.jobs))])
+            manifest["commands"]["backfill_expected_counts"] = backfill_cmd
+            _run(backfill_cmd)
 
-        fig_bucket = os.path.join(fig_root, "bucket_scorecards")
-        os.makedirs(fig_bucket, exist_ok=True)
-        cmd = [
-            sys.executable,
-            _script_path("plot_count_depth_bucket_scorecards.py"),
-            "--bucket-metrics-tsv",
-            bucket_tsv,
-            "--out-dir",
-            fig_bucket,
-        ]
-        manifest["commands"]["plot_bucket_scorecards"] = cmd
-        _run(cmd)
-        manifest["paths"]["figures_bucket_scorecards_dir"] = fig_bucket
+            bucket_tsv = os.path.join(out_dir, "count_depth_bucket_metrics.tsv")
+            cmd = [
+                sys.executable,
+                _script_path("collect_count_depth_bucket_metrics.py"),
+                "--grid-tsv",
+                grid_tsv,
+                "--out-tsv",
+                bucket_tsv,
+            ]
+            if int(args.jobs) > 0:
+                cmd.extend(["--jobs", str(int(args.jobs))])
+            manifest["commands"]["bucket_metrics"] = cmd
+            _run(cmd)
+            manifest["paths"]["bucket_metrics_tsv"] = bucket_tsv
+
+            fig_bucket = os.path.join(fig_root, "bucket_scorecards")
+            os.makedirs(fig_bucket, exist_ok=True)
+            cmd = [
+                sys.executable,
+                _script_path("plot_count_depth_bucket_scorecards.py"),
+                "--bucket-metrics-tsv",
+                bucket_tsv,
+                "--out-dir",
+                fig_bucket,
+            ]
+            manifest["commands"]["plot_bucket_scorecards"] = cmd
+            _run(cmd)
+            manifest["paths"]["figures_bucket_scorecards_dir"] = fig_bucket
 
     if str(args.preset) == "abundance":
         fig_abundance = os.path.join(fig_root, "abundance_audit")
