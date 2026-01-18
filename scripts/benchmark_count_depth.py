@@ -19,10 +19,8 @@ from guide_pmd.gene_level import compute_gene_meta
 from guide_pmd.gene_level_lmm import compute_gene_lmm
 from guide_pmd.gene_level_qc import compute_gene_qc
 from guide_pmd.gene_level_stouffer import compute_gene_stouffer
-from guide_pmd.expected_counts import bucket_expected_counts
-from guide_pmd.expected_counts import chisq_expected_counts
 from guide_pmd.expected_counts import collapse_guide_counts_to_gene_counts
-from guide_pmd.expected_counts import summarize_expected_counts
+from guide_pmd.expected_counts import compute_two_group_expected_count_quantifiability
 
 
 def _ks_uniform(p: pd.Series) -> dict[str, float | None]:
@@ -693,6 +691,45 @@ def _confusion(called: np.ndarray, is_signal: np.ndarray) -> dict[str, float | i
 def simulate_counts_and_std_res(
     cfg: CountDepthBenchmarkConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    counts_df, annotation_df, model_matrix, truth_sample, truth_gene, truth_guide = simulate_counts_and_truth(cfg)
+
+    is_ref_guide = annotation_df["gene_symbol"].astype(str).str.startswith("ref_").to_numpy(dtype=bool)
+
+    if cfg.response_mode == "pmd_std_res":
+        std_res_df = _compute_pmd_std_res(counts_df, n_boot=int(cfg.pmd_n_boot), seed=int(cfg.pmd_seed))
+    else:
+        counts_norm = _normalize_counts(counts_df, mode=str(cfg.normalization_mode))
+        log_vals = np.log(counts_norm + float(cfg.pseudocount))
+        log_vals = _apply_logratio(log_vals, mode=str(cfg.logratio_mode), ref_mask=is_ref_guide)
+        if cfg.response_mode == "log_counts":
+            response = log_vals
+        else:
+            # Per-guide z-scored log values (optional; does not change per-guide OLS t/p with an intercept).
+            guide_mean = np.mean(log_vals, axis=1, keepdims=True)
+            guide_sd = np.std(log_vals, axis=1, ddof=1, keepdims=True)
+            guide_sd = np.where(guide_sd <= 0, 1.0, guide_sd)
+            response = (log_vals - guide_mean) / guide_sd
+        std_res_df = pd.DataFrame(response, index=counts_df.index.copy(), columns=counts_df.columns.copy())
+
+    return (
+        counts_df,
+        annotation_df,
+        std_res_df,
+        model_matrix,
+        truth_sample,
+        truth_gene,
+        truth_guide,
+    )
+
+def simulate_counts_and_truth(
+    cfg: CountDepthBenchmarkConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Simulate per-guide counts + truth tables + model matrix (no response transformation).
+
+    This is a light-weight helper for backfilling / rehydrating benchmark inputs without
+    recomputing PMD standardized residuals.
+    """
     cfg.validate()
     rng = np.random.default_rng(int(cfg.seed))
 
@@ -817,24 +854,6 @@ def simulate_counts_and_std_res(
     log_libsize = np.log(libsize)
     log_libsize_centered = log_libsize - float(np.mean(log_libsize))
 
-    is_ref_guide = np.array([str(g).startswith("ref_") for g in gene_for_guide], dtype=bool)
-
-    if cfg.response_mode == "pmd_std_res":
-        std_res_df = _compute_pmd_std_res(counts_df, n_boot=int(cfg.pmd_n_boot), seed=int(cfg.pmd_seed))
-    else:
-        counts_norm = _normalize_counts(counts_df, mode=str(cfg.normalization_mode))
-        log_vals = np.log(counts_norm + float(cfg.pseudocount))
-        log_vals = _apply_logratio(log_vals, mode=str(cfg.logratio_mode), ref_mask=is_ref_guide)
-        if cfg.response_mode == "log_counts":
-            response = log_vals
-        else:
-            # Per-guide z-scored log values (optional; does not change per-guide OLS t/p with an intercept).
-            guide_mean = np.mean(log_vals, axis=1, keepdims=True)
-            guide_sd = np.std(log_vals, axis=1, ddof=1, keepdims=True)
-            guide_sd = np.where(guide_sd <= 0, 1.0, guide_sd)
-            response = (log_vals - guide_mean) / guide_sd
-        std_res_df = pd.DataFrame(response, index=guides, columns=sample_ids)
-
     model_matrix = pd.DataFrame({"treatment": treatment}, index=sample_ids)
     if str(cfg.depth_covariate_mode) == "log_libsize":
         model_matrix["log_libsize_centered"] = log_libsize_centered
@@ -869,13 +888,13 @@ def simulate_counts_and_std_res(
             "is_offtarget": np.asarray(is_offtarget_rows, dtype=bool),
         }
     )
+    truth_gene = truth_gene.merge(truth_guide.groupby("gene_id").size().rename("m_guides"), on="gene_id")
     return (
         counts_df,
         annotation_df,
-        std_res_df,
         model_matrix,
         truth_sample,
-        truth_gene.merge(truth_guide.groupby("gene_id").size().rename("m_guides"), on="gene_id"),
+        truth_gene,
         truth_guide,
     )
 
@@ -1147,58 +1166,18 @@ def run_benchmark(cfg: CountDepthBenchmarkConfig, out_dir: str) -> dict[str, obj
 
     # Expected-count quantifiability outputs (additive).
     gene_counts = collapse_guide_counts_to_gene_counts(counts_df, ann_df["gene_symbol"])
-    treatment = pd.to_numeric(mm["treatment"], errors="coerce")
-    if treatment.isna().any():
-        raise ValueError("model_matrix column 'treatment' must be numeric and non-missing")
-    ctrl_cols = treatment.index[treatment.to_numpy(dtype=float) <= 0.0].astype(str).tolist()
-    trt_cols = treatment.index[treatment.to_numpy(dtype=float) > 0.0].astype(str).tolist()
-    expected_ctrl = chisq_expected_counts(gene_counts.reindex(columns=ctrl_cols))
-    expected_trt = chisq_expected_counts(gene_counts.reindex(columns=trt_cols))
-
-    ctrl_summ = summarize_expected_counts(expected_ctrl, quantiles=(0.1,)).add_prefix("ctrl_")
-    trt_summ = summarize_expected_counts(expected_trt, quantiles=(0.1,)).add_prefix("trt_")
-    out_summ = pd.DataFrame(index=gene_counts.index.copy())
-    out_summ["y_ctrl_sum"] = gene_counts.reindex(columns=ctrl_cols).sum(axis=1).astype(float)
-    out_summ["y_trt_sum"] = gene_counts.reindex(columns=trt_cols).sum(axis=1).astype(float)
-    out_summ = out_summ.join(ctrl_summ, how="left").join(trt_summ, how="left")
-    out_summ["expected_p10_mincond"] = np.minimum(out_summ["ctrl_expected_p10"], out_summ["trt_expected_p10"]).astype(float)
-    out_summ["expected_p10_mincond_bucket"] = bucket_expected_counts(out_summ["expected_p10_mincond"]).astype(object)
-    out_summ = out_summ.reset_index().rename(columns={"gene_id": "gene_id"})
+    gene_summ, expected_long = compute_two_group_expected_count_quantifiability(
+        gene_counts,
+        mm["treatment"],
+        quantile=0.1,
+        bucket_thresholds=(1.0, 3.0, 5.0),
+    )
+    out_summ = gene_summ.reset_index()
 
     expected_summ_path = os.path.join(out_dir, "sim_gene_expected_counts.tsv")
     out_summ.to_csv(expected_summ_path, sep="\t", index=False)
 
     expected_matrix_path = os.path.join(out_dir, "sim_gene_expected_counts_matrix.tsv.gz")
-    ctrl_long = (
-        expected_ctrl.stack(dropna=False)
-        .rename("expected_count")
-        .rename_axis(index=["gene_id", "sample_id"])
-        .to_frame()
-        .join(
-            gene_counts.reindex(columns=ctrl_cols)
-            .stack(dropna=False)
-            .rename("observed_count")
-            .rename_axis(index=["gene_id", "sample_id"])
-        )
-        .reset_index()
-    )
-    ctrl_long["treatment"] = 0.0
-    trt_long = (
-        expected_trt.stack(dropna=False)
-        .rename("expected_count")
-        .rename_axis(index=["gene_id", "sample_id"])
-        .to_frame()
-        .join(
-            gene_counts.reindex(columns=trt_cols)
-            .stack(dropna=False)
-            .rename("observed_count")
-            .rename_axis(index=["gene_id", "sample_id"])
-        )
-        .reset_index()
-    )
-    trt_long["treatment"] = 1.0
-    expected_long = pd.concat([ctrl_long, trt_long], axis=0, ignore_index=True, sort=False)
-    expected_long = expected_long[["gene_id", "sample_id", "treatment", "observed_count", "expected_count"]]
     expected_long.to_csv(expected_matrix_path, sep="\t", index=False, compression="gzip")
 
     abundance_audit = _compute_abundance_audit(truth_gene, truth_guide, counts_df)
