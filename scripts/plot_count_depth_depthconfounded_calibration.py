@@ -311,15 +311,22 @@ def _plot_dashboard(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Depth-confounded calibration dashboards (QQ + FDP) for count-depth benchmarks (suite output consumer)."
+        description=(
+            "Treatment-depth calibration dashboards (QQ + FDP) for count-depth benchmarks (suite output consumer). "
+            "Intended to diagnose depth confounding by sweeping treatment-depth multipliers."
+        )
     )
     parser.add_argument("--grid-tsv", required=True, type=str, help="Suite-level count_depth_grid_summary.tsv (must include report_path).")
     parser.add_argument("--out-dir", required=True, type=str, help="Output directory for calibration dashboards.")
     parser.add_argument(
         "--treatment-depth-multiplier",
         type=float,
-        default=10.0,
-        help="Treatment depth multiplier to treat as 'depth-confounded' (default: 10).",
+        nargs="+",
+        default=None,
+        help=(
+            "Treatment depth multipliers to plot (e.g. 2 10). "
+            "If not set, uses all values present in the grid for the selected scenario."
+        ),
     )
     parser.add_argument(
         "--frac-signal",
@@ -347,7 +354,6 @@ def main() -> None:
         raise ValueError("--grid-tsv must include report_path (suite output) to locate per-run TSVs")
 
     grid_tsv_path = Path(args.grid_tsv).resolve()
-    tdm = float(args.treatment_depth_multiplier)
     fs = float(args.frac_signal)
 
     # Depth-confounded signal condition: no other scenario stressors enabled.
@@ -362,7 +368,6 @@ def main() -> None:
 
     sub = sub.loc[
         (sub["frac_signal"] == fs)
-        & (sub["treatment_depth_multiplier"] == tdm)
         & (sub["n_batches"] == 1)
         & (sub["batch_confounding_strength"] == 0.0)
         & (sub["batch_depth_log_sd"] == 0.0)
@@ -371,8 +376,29 @@ def main() -> None:
     ].copy()
 
     if sub.empty:
-        print("depth-confounded calibration: no matching runs; nothing to plot", file=sys.stderr)
+        print("treatment-depth calibration: no matching runs; nothing to plot", file=sys.stderr)
         return
+
+    available_tdms = sorted([float(x) for x in sub["treatment_depth_multiplier"].dropna().unique().tolist()])
+    requested_tdms = args.treatment_depth_multiplier
+    if requested_tdms is None:
+        tdms = available_tdms
+    else:
+        tdms = []
+        for req in [float(x) for x in requested_tdms]:
+            hit = None
+            for a in available_tdms:
+                if np.isfinite(a) and np.isclose(a, req, rtol=0.0, atol=1e-9):
+                    hit = a
+                    break
+            if hit is None:
+                print(
+                    f"treatment-depth calibration: skip tdm={req:g} (no matching runs in grid after filters)",
+                    file=sys.stderr,
+                )
+                continue
+            tdms.append(float(hit))
+        tdms = sorted(tdms)
 
     # `report_path` values in suite TSVs are typically workspace-relative (e.g. ".tmp/...").
     # Resolve them against the nearest ancestor of `--grid-tsv` that contains those paths.
@@ -387,12 +413,10 @@ def main() -> None:
                     break
 
     q_grid = np.linspace(0.0, 0.2, 41, dtype=float)  # 0.00..0.20 step 0.005
-    response_modes = sorted(sub["response_mode"].astype(str).unique().tolist())
-
     manifest: dict[str, object] = {
         "grid_tsv": str(args.grid_tsv),
         "filters": {
-            "treatment_depth_multiplier": tdm,
+            "treatment_depth_multipliers": [float(x) for x in (tdms or [])],
             "frac_signal": fs,
             "normalization_mode": str(args.normalization_mode),
             "logratio_mode": str(args.logratio_mode),
@@ -404,116 +428,128 @@ def main() -> None:
                 "nb_overdispersion": 0.0,
             },
         },
-        "response_modes": response_modes,
         "outputs": {},
     }
 
-    for rm in response_modes:
-        rm_sub = sub.loc[sub["response_mode"].astype(str) == str(rm)].copy()
-        if rm != "pmd_std_res":
-            rm_sub = rm_sub.loc[
-                (rm_sub["normalization_mode"].astype(str) == str(args.normalization_mode))
-                & (rm_sub["logratio_mode"].astype(str) == str(args.logratio_mode))
-            ].copy()
-        if rm_sub.empty:
+    for tdm in tdms:
+        tdm_sub = sub.loc[np.isclose(sub["treatment_depth_multiplier"], float(tdm), rtol=0.0, atol=1e-9)].copy()
+        if tdm_sub.empty:
             continue
+        response_modes = sorted(tdm_sub["response_mode"].astype(str).unique().tolist())
+        manifest["outputs"][f"tdm={tdm:g}"] = {}
 
-        # Predeclare pipeline visuals (method color, depthcov linestyle).
-        pipelines: list[PipelineSpec] = []
-        for method in _ordered_methods():
-            for depth_mode in _ordered_depthcov():
-                label = _pipeline_display(method, depth_mode)
-                pipelines.append(
-                    PipelineSpec(
-                        method=str(method),
-                        depth_covariate_mode=str(depth_mode),
-                        label=label,
-                        color=_color_for_method(method),
-                        linestyle="-" if depth_mode != "none" else "--",
-                    )
-                )
-
-        # Accumulate run-level data for averaging curves (and pooling QQ).
-        qq_null_p_by_pipeline: dict[str, list[pd.Series]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
-        fdp_curves_by_pipeline: dict[str, list[np.ndarray]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
-        fdp_summary_by_pipeline: dict[str, list[dict[str, float]]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
-
-        for row in rm_sub.itertuples(index=False):
-            row_s = pd.Series(row._asdict())
-            report_path = Path(str(row_s["report_path"]))
-            if not report_path.is_absolute():
-                report_path = report_root / report_path
-            run_dir = report_path.parent
-            depth_mode = str(row_s.get("depth_covariate_mode", ""))
-            if depth_mode not in set(_ordered_depthcov()):
+        for rm in response_modes:
+            rm_sub = tdm_sub.loc[tdm_sub["response_mode"].astype(str) == str(rm)].copy()
+            if rm != "pmd_std_res":
+                rm_sub = rm_sub.loc[
+                    (rm_sub["normalization_mode"].astype(str) == str(args.normalization_mode))
+                    & (rm_sub["logratio_mode"].astype(str) == str(args.logratio_mode))
+                ].copy()
+            if rm_sub.empty:
                 continue
 
-            run_tables = _load_run_long_tables(run_dir)
+            # Predeclare pipeline visuals (method color, depthcov linestyle).
+            pipelines: list[PipelineSpec] = []
             for method in _ordered_methods():
-                df_long = run_tables.get(method, pd.DataFrame())
-                if df_long.empty:
+                for depth_mode in _ordered_depthcov():
+                    label = _pipeline_display(method, depth_mode)
+                    pipelines.append(
+                        PipelineSpec(
+                            method=str(method),
+                            depth_covariate_mode=str(depth_mode),
+                            label=label,
+                            color=_color_for_method(method),
+                            linestyle="-" if depth_mode != "none" else "--",
+                        )
+                    )
+
+            # Accumulate run-level data for averaging curves (and pooling QQ).
+            qq_null_p_by_pipeline: dict[str, list[pd.Series]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
+            fdp_curves_by_pipeline: dict[str, list[np.ndarray]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
+            fdp_summary_by_pipeline: dict[str, list[dict[str, float]]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
+
+            for row in rm_sub.itertuples(index=False):
+                row_s = pd.Series(row._asdict())
+                report_path = Path(str(row_s["report_path"]))
+                if not report_path.is_absolute():
+                    report_path = report_root / report_path
+                run_dir = report_path.parent
+                depth_mode = str(row_s.get("depth_covariate_mode", ""))
+                if depth_mode not in set(_ordered_depthcov()):
                     continue
-                df_long = df_long.loc[~df_long["is_reference"].astype(bool)].copy()
-                key = f"{method}__{depth_mode}"
 
-                # QQ: null p-values (raw p only).
-                qq_null_p_by_pipeline[key].append(df_long.loc[~df_long["is_signal"], "p"])
+                run_tables = _load_run_long_tables(run_dir)
+                for method in _ordered_methods():
+                    df_long = run_tables.get(method, pd.DataFrame())
+                    if df_long.empty:
+                        continue
+                    df_long = df_long.loc[~df_long["is_reference"].astype(bool)].copy()
+                    key = f"{method}__{depth_mode}"
 
-                # FDP curves: per-run BH adjusted p-values.
-                fdp_curves_by_pipeline[key].append(_fdp_curve_one_run(df_long, q_grid=q_grid))
-                fdp05, _ = _summary_one_run(df_long, q=0.05)
-                fdp10, n10 = _summary_one_run(df_long, q=0.10)
-                fdp_summary_by_pipeline[key].append({"fdp_q05": float(fdp05), "fdp_q10": float(fdp10), "n_called_q10": float(n10)})
+                    # QQ: null p-values (raw p only).
+                    qq_null_p_by_pipeline[key].append(df_long.loc[~df_long["is_signal"], "p"])
 
-        # Reduce to pooled series/mean curves.
-        qq_null_p_final: dict[str, pd.Series] = {}
-        fdp_curves_final: dict[str, np.ndarray] = {}
-        fdp_summary_final: dict[str, dict[str, float]] = {}
+                    # FDP curves: per-run BH adjusted p-values.
+                    fdp_curves_by_pipeline[key].append(_fdp_curve_one_run(df_long, q_grid=q_grid))
+                    fdp05, _ = _summary_one_run(df_long, q=0.05)
+                    fdp10, n10 = _summary_one_run(df_long, q=0.10)
+                    fdp_summary_by_pipeline[key].append(
+                        {"fdp_q05": float(fdp05), "fdp_q10": float(fdp10), "n_called_q10": float(n10)}
+                    )
 
-        for p in pipelines:
-            k = f"{p.method}__{p.depth_covariate_mode}"
-            pooled = pd.concat(qq_null_p_by_pipeline.get(k, []), axis=0, ignore_index=True) if qq_null_p_by_pipeline.get(k) else pd.Series(dtype=float)
-            qq_null_p_final[k] = pooled
+            # Reduce to pooled series/mean curves.
+            qq_null_p_final: dict[str, pd.Series] = {}
+            fdp_curves_final: dict[str, np.ndarray] = {}
+            fdp_summary_final: dict[str, dict[str, float]] = {}
 
-            curves = fdp_curves_by_pipeline.get(k, [])
-            if curves:
-                m = np.nanmean(np.vstack(curves), axis=0)
-                fdp_curves_final[k] = m.astype(float)
-            else:
-                fdp_curves_final[k] = np.full_like(q_grid, np.nan, dtype=float)
+            for p in pipelines:
+                k = f"{p.method}__{p.depth_covariate_mode}"
+                pooled = (
+                    pd.concat(qq_null_p_by_pipeline.get(k, []), axis=0, ignore_index=True)
+                    if qq_null_p_by_pipeline.get(k)
+                    else pd.Series(dtype=float)
+                )
+                qq_null_p_final[k] = pooled
 
-            summ = fdp_summary_by_pipeline.get(k, [])
-            if summ:
-                s_df = pd.DataFrame(summ)
-                fdp_summary_final[k] = {
-                    "fdp_q05": float(np.nanmean(pd.to_numeric(s_df["fdp_q05"], errors="coerce").to_numpy(dtype=float))),
-                    "fdp_q10": float(np.nanmean(pd.to_numeric(s_df["fdp_q10"], errors="coerce").to_numpy(dtype=float))),
-                    "n_called_q10": float(np.nanmean(pd.to_numeric(s_df["n_called_q10"], errors="coerce").to_numpy(dtype=float))),
-                }
-            else:
-                fdp_summary_final[k] = {"fdp_q05": np.nan, "fdp_q10": np.nan, "n_called_q10": 0.0}
+                curves = fdp_curves_by_pipeline.get(k, [])
+                if curves:
+                    m = np.nanmean(np.vstack(curves), axis=0)
+                    fdp_curves_final[k] = m.astype(float)
+                else:
+                    fdp_curves_final[k] = np.full_like(q_grid, np.nan, dtype=float)
 
-        # Figure
-        out_subdir = Path(args.out_dir) / f"resp={rm}"
-        out_subdir.mkdir(parents=True, exist_ok=True)
+                summ = fdp_summary_by_pipeline.get(k, [])
+                if summ:
+                    s_df = pd.DataFrame(summ)
+                    fdp_summary_final[k] = {
+                        "fdp_q05": float(np.nanmean(pd.to_numeric(s_df["fdp_q05"], errors="coerce").to_numpy(dtype=float))),
+                        "fdp_q10": float(np.nanmean(pd.to_numeric(s_df["fdp_q10"], errors="coerce").to_numpy(dtype=float))),
+                        "n_called_q10": float(np.nanmean(pd.to_numeric(s_df["n_called_q10"], errors="coerce").to_numpy(dtype=float))),
+                    }
+                else:
+                    fdp_summary_final[k] = {"fdp_q05": np.nan, "fdp_q10": np.nan, "n_called_q10": 0.0}
 
-        title = (
-            f"Depth-confounded calibration ({rm})\n"
-            f"tdm={tdm:g}, frac_signal={fs:g}, norm={str(args.normalization_mode)}, lr={str(args.logratio_mode)}"
-        )
-        out_path = out_subdir / f"calibration_dashboard__tdm={tdm:g}__fs={fs:g}__norm={str(args.normalization_mode)}__lr={str(args.logratio_mode)}.png"
+            # Figure
+            out_subdir = Path(args.out_dir) / f"tdm={tdm:g}" / f"resp={rm}"
+            out_subdir.mkdir(parents=True, exist_ok=True)
 
-        _plot_dashboard(
-            out_path=str(out_path),
-            title=title,
-            pipelines=pipelines,
-            qq_null_p_by_pipeline=qq_null_p_final,
-            fdp_curves_by_pipeline=fdp_curves_final,
-            fdp_summary_by_pipeline=fdp_summary_final,
-            q_grid=q_grid,
-        )
+            title = (
+                f"Treatment-depth calibration ({rm})\n"
+                f"tdm={tdm:g}, frac_signal={fs:g}, norm={str(args.normalization_mode)}, lr={str(args.logratio_mode)}"
+            )
+            out_path = out_subdir / f"calibration_dashboard__fs={fs:g}__norm={str(args.normalization_mode)}__lr={str(args.logratio_mode)}.png"
 
-        manifest["outputs"][rm] = {"dashboard_png": str(out_path), "n_runs": int(rm_sub.shape[0])}
+            _plot_dashboard(
+                out_path=str(out_path),
+                title=title,
+                pipelines=pipelines,
+                qq_null_p_by_pipeline=qq_null_p_final,
+                fdp_curves_by_pipeline=fdp_curves_final,
+                fdp_summary_by_pipeline=fdp_summary_final,
+                q_grid=q_grid,
+            )
+
+            manifest["outputs"][f"tdm={tdm:g}"][rm] = {"dashboard_png": str(out_path), "n_runs": int(rm_sub.shape[0])}
 
     manifest_path = Path(args.out_dir) / "calibration_depthconfounded_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
