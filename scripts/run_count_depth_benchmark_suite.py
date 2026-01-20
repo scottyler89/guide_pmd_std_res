@@ -724,6 +724,20 @@ def main() -> None:
     _run(cmd)
     manifest["paths"]["figures_p_hist_dir"] = fig_p_hist
 
+    fig_cal = os.path.join(fig_root, "calibration_depthconfounded")
+    os.makedirs(fig_cal, exist_ok=True)
+    cmd = [
+        sys.executable,
+        _script_path("plot_count_depth_depthconfounded_calibration.py"),
+        "--grid-tsv",
+        grid_tsv,
+        "--out-dir",
+        fig_cal,
+    ]
+    manifest["commands"]["plot_calibration_depthconfounded"] = cmd
+    _run(cmd)
+    manifest["paths"]["figures_calibration_depthconfounded_dir"] = fig_cal
+
     if bool(args.bucket_metrics):
         # Bucket metrics require real run directories (sim_* inputs + per-method TSVs).
         # If a user provides a synthetic/minimal grid TSV (e.g. for plot testing), skip cleanly.
