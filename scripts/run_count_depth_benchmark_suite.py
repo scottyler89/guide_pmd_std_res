@@ -263,10 +263,10 @@ def main() -> None:
         ]
 
     grid_args = preset_args + list(args.grid_args or []) + list(unknown)
-    if int(args.jobs) > 0 and "--jobs" not in [str(x) for x in grid_args]:
-        grid_args.extend(["--jobs", str(int(args.jobs))])
     if args.grid_tsv is not None and grid_args:
         raise ValueError("cannot use --grid-args (or extra grid flags) together with --grid-tsv")
+    if (args.grid_tsv is None) and int(args.jobs) > 0 and "--jobs" not in [str(x) for x in grid_args]:
+        grid_args.extend(["--jobs", str(int(args.jobs))])
 
     out_dir = str(args.out_dir)
     current_git = _try_git_info()
