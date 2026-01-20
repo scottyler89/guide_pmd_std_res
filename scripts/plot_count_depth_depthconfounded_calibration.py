@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -199,8 +200,96 @@ def _method_paths(run_dir: Path) -> dict[str, Path]:
     }
 
 
+def _stable_hash(obj: object) -> str:
+    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()[:10]
+
+
+def _fmt_num(x: object) -> str:
+    v = pd.to_numeric(pd.Series([x]), errors="coerce").iloc[0]
+    if not np.isfinite(v):
+        return "NA"
+    if float(v).is_integer():
+        return str(int(v))
+    return f"{float(v):g}"
+
+
+def _bucket_dirname(bucket: str) -> str:
+    b = str(bucket)
+    mapping = {
+        "all_nonref": "all_nonref",
+        "<1": "lt1",
+        "1-<3": "1to3",
+        "3-<5": "3to5",
+        ">=5": "ge5",
+        "NA": "NA",
+    }
+    return mapping.get(b, b.replace("<", "lt").replace(">=", "ge").replace(">", "gt").replace("=", "eq"))
+
+
+def _load_expected_bucket(run_dir: Path) -> pd.DataFrame:
+    path = run_dir / "sim_gene_expected_counts.tsv"
+    if not path.is_file():
+        return pd.DataFrame({"gene_id": [], "expected_p10_mincond_bucket": []})
+    df = pd.read_csv(path, sep="\t")
+    if "gene_id" not in df.columns:
+        return pd.DataFrame({"gene_id": [], "expected_p10_mincond_bucket": []})
+    if "expected_p10_mincond_bucket" not in df.columns:
+        df["expected_p10_mincond_bucket"] = np.nan
+    return df[["gene_id", "expected_p10_mincond_bucket"]].copy()
+
+
+def _abundance_signature(row: pd.Series) -> dict[str, object]:
+    glf = str(row.get("gene_lambda_family", "lognormal"))
+    guf = str(row.get("guide_lambda_family", "lognormal_noise"))
+
+    sig: dict[str, object] = {
+        "gene_lambda_family": glf,
+        "gene_lambda_log_sd": _fmt_num(row.get("gene_lambda_log_sd")),
+        "guide_lambda_family": guf,
+        "guide_lambda_log_mean": _fmt_num(row.get("guide_lambda_log_mean")),
+        "guide_lambda_log_sd": _fmt_num(row.get("guide_lambda_log_sd")),
+    }
+
+    if glf == "mixture_lognormal":
+        sig["gene_lambda_mix_pi_high"] = _fmt_num(row.get("gene_lambda_mix_pi_high"))
+        sig["gene_lambda_mix_delta_log_mean"] = _fmt_num(row.get("gene_lambda_mix_delta_log_mean"))
+    if glf == "power_law":
+        sig["gene_lambda_power_alpha"] = _fmt_num(row.get("gene_lambda_power_alpha"))
+    if guf == "dirichlet_weights":
+        sig["guide_lambda_dirichlet_alpha0"] = _fmt_num(row.get("guide_lambda_dirichlet_alpha0"))
+
+    return sig
+
+
+def _abundance_label(sig: dict[str, object]) -> str:
+    glf = str(sig.get("gene_lambda_family", "lognormal"))
+    if glf == "lognormal":
+        glf_tag = "glf=ln"
+    elif glf == "mixture_lognormal":
+        glf_tag = f"glf=mln_pi={sig.get('gene_lambda_mix_pi_high','NA')}_dlog={sig.get('gene_lambda_mix_delta_log_mean','NA')}"
+    elif glf == "power_law":
+        glf_tag = f"glf=pl_a={sig.get('gene_lambda_power_alpha','NA')}"
+    else:
+        glf_tag = f"glf={glf}"
+
+    guf = str(sig.get("guide_lambda_family", "lognormal_noise"))
+    if guf == "lognormal_noise":
+        guf_tag = "guf=lnn"
+    elif guf == "dirichlet_weights":
+        guf_tag = f"guf=dir_a0={sig.get('guide_lambda_dirichlet_alpha0','NA')}"
+    else:
+        guf_tag = f"guf={guf}"
+
+    glm = sig.get("guide_lambda_log_mean", "NA")
+    glsd = sig.get("gene_lambda_log_sd", "NA")
+    gulsd = sig.get("guide_lambda_log_sd", "NA")
+    return f"{glf_tag}__gene_sd={glsd}__{guf_tag}__base_logmean={glm}__guide_sd={gulsd}"
+
+
 def _load_run_long_tables(run_dir: Path) -> dict[str, pd.DataFrame]:
     truth = _load_truth(run_dir)
+    expected = _load_expected_bucket(run_dir)
 
     paths = _method_paths(run_dir)
     meta = _load_table(paths["meta"])
@@ -208,10 +297,18 @@ def _load_run_long_tables(run_dir: Path) -> dict[str, pd.DataFrame]:
     lmm = _load_table(paths["lmm"])
 
     out: dict[str, pd.DataFrame] = {}
-    out["meta"] = _method_long(truth, method_name="meta", df=meta, p_col="p", p_adj_col="p_adj")
-    out["stouffer"] = _method_long(truth, method_name="stouffer", df=stouffer, p_col="p", p_adj_col="p_adj")
-    out["lmm_lrt"] = _method_long(truth, method_name="lmm_lrt", df=lmm, p_col="lrt_p", p_adj_col="lrt_p_adj")
-    out["lmm_wald"] = _method_long(truth, method_name="lmm_wald", df=lmm, p_col="wald_p", p_adj_col="wald_p_adj")
+    out["meta"] = _method_long(truth, method_name="meta", df=meta, p_col="p", p_adj_col="p_adj").merge(
+        expected, on="gene_id", how="left"
+    )
+    out["stouffer"] = _method_long(truth, method_name="stouffer", df=stouffer, p_col="p", p_adj_col="p_adj").merge(
+        expected, on="gene_id", how="left"
+    )
+    out["lmm_lrt"] = _method_long(truth, method_name="lmm_lrt", df=lmm, p_col="lrt_p", p_adj_col="lrt_p_adj").merge(
+        expected, on="gene_id", how="left"
+    )
+    out["lmm_wald"] = _method_long(truth, method_name="lmm_wald", df=lmm, p_col="wald_p", p_adj_col="wald_p_adj").merge(
+        expected, on="gene_id", how="left"
+    )
     return out
 
 
@@ -413,6 +510,7 @@ def main() -> None:
                     break
 
     q_grid = np.linspace(0.0, 0.2, 41, dtype=float)  # 0.00..0.20 step 0.005
+    buckets = ["all_nonref", ">=5", "3-<5", "1-<3", "<1"]
     manifest: dict[str, object] = {
         "grid_tsv": str(args.grid_tsv),
         "filters": {
@@ -428,6 +526,7 @@ def main() -> None:
                 "nb_overdispersion": 0.0,
             },
         },
+        "abundance_groups": {},
         "outputs": {},
     }
 
@@ -435,121 +534,175 @@ def main() -> None:
         tdm_sub = sub.loc[np.isclose(sub["treatment_depth_multiplier"], float(tdm), rtol=0.0, atol=1e-9)].copy()
         if tdm_sub.empty:
             continue
-        response_modes = sorted(tdm_sub["response_mode"].astype(str).unique().tolist())
-        manifest["outputs"][f"tdm={tdm:g}"] = {}
+        # Compute abundance-group IDs (gene/guide lambda families + key params).
+        abundance_specs: dict[str, dict[str, object]] = {}
+        abundance_ids: list[str] = []
+        abundance_labels: list[str] = []
+        for row in tdm_sub.itertuples(index=False):
+            row_s = pd.Series(row._asdict())
+            sig = _abundance_signature(row_s)
+            aid = _stable_hash(sig)
+            if aid not in abundance_specs:
+                abundance_specs[aid] = {"signature": sig, "label": _abundance_label(sig)}
+            abundance_ids.append(aid)
+            abundance_labels.append(str(abundance_specs[aid]["label"]))
+        tdm_sub = tdm_sub.copy()
+        tdm_sub["abundance_id"] = abundance_ids
+        tdm_sub["abundance_label"] = abundance_labels
 
-        for rm in response_modes:
-            rm_sub = tdm_sub.loc[tdm_sub["response_mode"].astype(str) == str(rm)].copy()
-            if rm != "pmd_std_res":
-                rm_sub = rm_sub.loc[
-                    (rm_sub["normalization_mode"].astype(str) == str(args.normalization_mode))
-                    & (rm_sub["logratio_mode"].astype(str) == str(args.logratio_mode))
-                ].copy()
-            if rm_sub.empty:
-                continue
+        # Record signatures once for the manifest.
+        for aid, spec in abundance_specs.items():
+            if aid not in manifest["abundance_groups"]:
+                manifest["abundance_groups"][aid] = spec
 
-            # Predeclare pipeline visuals (method color, depthcov linestyle).
-            pipelines: list[PipelineSpec] = []
-            for method in _ordered_methods():
-                for depth_mode in _ordered_depthcov():
-                    label = _pipeline_display(method, depth_mode)
-                    pipelines.append(
-                        PipelineSpec(
-                            method=str(method),
-                            depth_covariate_mode=str(depth_mode),
-                            label=label,
-                            color=_color_for_method(method),
-                            linestyle="-" if depth_mode != "none" else "--",
-                        )
-                    )
+        tdm_key = f"tdm={tdm:g}"
+        manifest["outputs"][tdm_key] = {}
 
-            # Accumulate run-level data for averaging curves (and pooling QQ).
-            qq_null_p_by_pipeline: dict[str, list[pd.Series]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
-            fdp_curves_by_pipeline: dict[str, list[np.ndarray]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
-            fdp_summary_by_pipeline: dict[str, list[dict[str, float]]] = {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()}
+        for aid, gdf in tdm_sub.groupby("abundance_id", sort=True):
+            spec = abundance_specs.get(str(aid), {})
+            abundance_label = str(spec.get("label", "abundance"))
+            group_key = f"abundance={abundance_label}__h={aid}"
+            manifest["outputs"][tdm_key][group_key] = {}
 
-            for row in rm_sub.itertuples(index=False):
-                row_s = pd.Series(row._asdict())
-                report_path = Path(str(row_s["report_path"]))
-                if not report_path.is_absolute():
-                    report_path = report_root / report_path
-                run_dir = report_path.parent
-                depth_mode = str(row_s.get("depth_covariate_mode", ""))
-                if depth_mode not in set(_ordered_depthcov()):
+            response_modes = sorted(gdf["response_mode"].astype(str).unique().tolist())
+            for rm in response_modes:
+                rm_sub = gdf.loc[gdf["response_mode"].astype(str) == str(rm)].copy()
+                if rm != "pmd_std_res":
+                    rm_sub = rm_sub.loc[
+                        (rm_sub["normalization_mode"].astype(str) == str(args.normalization_mode))
+                        & (rm_sub["logratio_mode"].astype(str) == str(args.logratio_mode))
+                    ].copy()
+                if rm_sub.empty:
                     continue
 
-                run_tables = _load_run_long_tables(run_dir)
+                # Predeclare pipeline visuals (method color, depthcov linestyle).
+                pipelines: list[PipelineSpec] = []
                 for method in _ordered_methods():
-                    df_long = run_tables.get(method, pd.DataFrame())
-                    if df_long.empty:
+                    for depth_mode in _ordered_depthcov():
+                        label = _pipeline_display(method, depth_mode)
+                        pipelines.append(
+                            PipelineSpec(
+                                method=str(method),
+                                depth_covariate_mode=str(depth_mode),
+                                label=label,
+                                color=_color_for_method(method),
+                                linestyle="-" if depth_mode != "none" else "--",
+                            )
+                        )
+
+                # Accumulate run-level data per bucket (avoid mixing across genes with no membership).
+                qq_null_p: dict[str, dict[str, list[pd.Series]]] = {
+                    b: {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()} for b in buckets
+                }
+                fdp_curves: dict[str, dict[str, list[np.ndarray]]] = {
+                    b: {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()} for b in buckets
+                }
+                fdp_summary: dict[str, dict[str, list[dict[str, float]]]] = {
+                    b: {f"{m}__{d}": [] for m in _ordered_methods() for d in _ordered_depthcov()} for b in buckets
+                }
+
+                for row in rm_sub.itertuples(index=False):
+                    row_s = pd.Series(row._asdict())
+                    report_path = Path(str(row_s["report_path"]))
+                    if not report_path.is_absolute():
+                        report_path = report_root / report_path
+                    run_dir = report_path.parent
+                    depth_mode = str(row_s.get("depth_covariate_mode", ""))
+                    if depth_mode not in set(_ordered_depthcov()):
                         continue
-                    df_long = df_long.loc[~df_long["is_reference"].astype(bool)].copy()
-                    key = f"{method}__{depth_mode}"
 
-                    # QQ: null p-values (raw p only).
-                    qq_null_p_by_pipeline[key].append(df_long.loc[~df_long["is_signal"], "p"])
+                    run_tables = _load_run_long_tables(run_dir)
+                    for method in _ordered_methods():
+                        df_long = run_tables.get(method, pd.DataFrame())
+                        if df_long.empty:
+                            continue
+                        df_long = df_long.loc[~df_long["is_reference"].astype(bool)].copy()
+                        key = f"{method}__{depth_mode}"
 
-                    # FDP curves: per-run BH adjusted p-values.
-                    fdp_curves_by_pipeline[key].append(_fdp_curve_one_run(df_long, q_grid=q_grid))
-                    fdp05, _ = _summary_one_run(df_long, q=0.05)
-                    fdp10, n10 = _summary_one_run(df_long, q=0.10)
-                    fdp_summary_by_pipeline[key].append(
-                        {"fdp_q05": float(fdp05), "fdp_q10": float(fdp10), "n_called_q10": float(n10)}
+                        for b in buckets:
+                            if b == "all_nonref":
+                                df_b = df_long
+                            else:
+                                df_b = df_long.loc[df_long["expected_p10_mincond_bucket"].astype(str) == str(b)].copy()
+                            if df_b.empty:
+                                continue
+
+                            # QQ: null p-values (raw p only).
+                            qq_null_p[b][key].append(df_b.loc[~df_b["is_signal"], "p"])
+
+                            # FDP curves: per-run BH adjusted p-values.
+                            fdp_curves[b][key].append(_fdp_curve_one_run(df_b, q_grid=q_grid))
+                            fdp05, _ = _summary_one_run(df_b, q=0.05)
+                            fdp10, n10 = _summary_one_run(df_b, q=0.10)
+                            fdp_summary[b][key].append({"fdp_q05": float(fdp05), "fdp_q10": float(fdp10), "n_called_q10": float(n10)})
+
+                out_base = Path(args.out_dir) / tdm_key / group_key / f"resp={rm}"
+                out_base.mkdir(parents=True, exist_ok=True)
+                manifest["outputs"][tdm_key][group_key][rm] = {"n_runs": int(rm_sub.shape[0]), "buckets": {}}
+
+                for b in buckets:
+                    # Reduce to pooled series/mean curves.
+                    qq_null_p_final: dict[str, pd.Series] = {}
+                    fdp_curves_final: dict[str, np.ndarray] = {}
+                    fdp_summary_final: dict[str, dict[str, float]] = {}
+
+                    has_any = False
+                    for p in pipelines:
+                        k = f"{p.method}__{p.depth_covariate_mode}"
+                        pooled = (
+                            pd.concat(qq_null_p[b].get(k, []), axis=0, ignore_index=True)
+                            if qq_null_p[b].get(k)
+                            else pd.Series(dtype=float)
+                        )
+                        qq_null_p_final[k] = pooled
+                        if not pooled.empty:
+                            has_any = True
+
+                        curves = fdp_curves[b].get(k, [])
+                        if curves:
+                            m = np.nanmean(np.vstack(curves), axis=0)
+                            fdp_curves_final[k] = m.astype(float)
+                        else:
+                            fdp_curves_final[k] = np.full_like(q_grid, np.nan, dtype=float)
+
+                        summ = fdp_summary[b].get(k, [])
+                        if summ:
+                            s_df = pd.DataFrame(summ)
+                            fdp_summary_final[k] = {
+                                "fdp_q05": float(np.nanmean(pd.to_numeric(s_df["fdp_q05"], errors="coerce").to_numpy(dtype=float))),
+                                "fdp_q10": float(np.nanmean(pd.to_numeric(s_df["fdp_q10"], errors="coerce").to_numpy(dtype=float))),
+                                "n_called_q10": float(np.nanmean(pd.to_numeric(s_df["n_called_q10"], errors="coerce").to_numpy(dtype=float))),
+                            }
+                        else:
+                            fdp_summary_final[k] = {"fdp_q05": np.nan, "fdp_q10": np.nan, "n_called_q10": 0.0}
+
+                    if not has_any:
+                        continue
+
+                    bucket_dir = out_base / f"bucket={_bucket_dirname(b)}"
+                    bucket_dir.mkdir(parents=True, exist_ok=True)
+
+                    title = (
+                        f"Treatment-depth calibration ({rm})\n"
+                        f"{abundance_label}\n"
+                        f"tdm={tdm:g}, bucket={b}, frac_signal={fs:g}, norm={str(args.normalization_mode)}, lr={str(args.logratio_mode)}"
+                    )
+                    out_path = bucket_dir / f"calibration_dashboard__fs={fs:g}__norm={str(args.normalization_mode)}__lr={str(args.logratio_mode)}.png"
+
+                    _plot_dashboard(
+                        out_path=str(out_path),
+                        title=title,
+                        pipelines=pipelines,
+                        qq_null_p_by_pipeline=qq_null_p_final,
+                        fdp_curves_by_pipeline=fdp_curves_final,
+                        fdp_summary_by_pipeline=fdp_summary_final,
+                        q_grid=q_grid,
                     )
 
-            # Reduce to pooled series/mean curves.
-            qq_null_p_final: dict[str, pd.Series] = {}
-            fdp_curves_final: dict[str, np.ndarray] = {}
-            fdp_summary_final: dict[str, dict[str, float]] = {}
-
-            for p in pipelines:
-                k = f"{p.method}__{p.depth_covariate_mode}"
-                pooled = (
-                    pd.concat(qq_null_p_by_pipeline.get(k, []), axis=0, ignore_index=True)
-                    if qq_null_p_by_pipeline.get(k)
-                    else pd.Series(dtype=float)
-                )
-                qq_null_p_final[k] = pooled
-
-                curves = fdp_curves_by_pipeline.get(k, [])
-                if curves:
-                    m = np.nanmean(np.vstack(curves), axis=0)
-                    fdp_curves_final[k] = m.astype(float)
-                else:
-                    fdp_curves_final[k] = np.full_like(q_grid, np.nan, dtype=float)
-
-                summ = fdp_summary_by_pipeline.get(k, [])
-                if summ:
-                    s_df = pd.DataFrame(summ)
-                    fdp_summary_final[k] = {
-                        "fdp_q05": float(np.nanmean(pd.to_numeric(s_df["fdp_q05"], errors="coerce").to_numpy(dtype=float))),
-                        "fdp_q10": float(np.nanmean(pd.to_numeric(s_df["fdp_q10"], errors="coerce").to_numpy(dtype=float))),
-                        "n_called_q10": float(np.nanmean(pd.to_numeric(s_df["n_called_q10"], errors="coerce").to_numpy(dtype=float))),
+                    manifest["outputs"][tdm_key][group_key][rm]["buckets"][str(b)] = {
+                        "bucket_dir": str(bucket_dir),
+                        "dashboard_png": str(out_path),
                     }
-                else:
-                    fdp_summary_final[k] = {"fdp_q05": np.nan, "fdp_q10": np.nan, "n_called_q10": 0.0}
-
-            # Figure
-            out_subdir = Path(args.out_dir) / f"tdm={tdm:g}" / f"resp={rm}"
-            out_subdir.mkdir(parents=True, exist_ok=True)
-
-            title = (
-                f"Treatment-depth calibration ({rm})\n"
-                f"tdm={tdm:g}, frac_signal={fs:g}, norm={str(args.normalization_mode)}, lr={str(args.logratio_mode)}"
-            )
-            out_path = out_subdir / f"calibration_dashboard__fs={fs:g}__norm={str(args.normalization_mode)}__lr={str(args.logratio_mode)}.png"
-
-            _plot_dashboard(
-                out_path=str(out_path),
-                title=title,
-                pipelines=pipelines,
-                qq_null_p_by_pipeline=qq_null_p_final,
-                fdp_curves_by_pipeline=fdp_curves_final,
-                fdp_summary_by_pipeline=fdp_summary_final,
-                q_grid=q_grid,
-            )
-
-            manifest["outputs"][f"tdm={tdm:g}"][rm] = {"dashboard_png": str(out_path), "n_runs": int(rm_sub.shape[0])}
 
     manifest_path = Path(args.out_dir) / "calibration_depthconfounded_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
