@@ -10,6 +10,7 @@ import pandas as pd
 
 from count_depth_scenarios import attach_scenarios
 from count_depth_scenarios import make_scenario_table
+from suite_paths import ReportPathResolver
 
 
 def _require_matplotlib():
@@ -200,6 +201,7 @@ def main() -> None:
 
     df = pd.read_csv(str(args.grid_tsv), sep="\t")
     df = attach_scenarios(df)
+    resolver = ReportPathResolver.from_grid_tsv(args.grid_tsv)
 
     scenario_table = make_scenario_table(df)
     scenario_table = scenario_table.sort_values(["is_null", "scenario"], kind="mergesort").reset_index(drop=True)
@@ -219,8 +221,8 @@ def main() -> None:
             sub = df[df["scenario_id"].astype(str) == scenario_id].copy()
             rep = _pick_representative_row(sub)
 
-            report_path = str(rep["report_path"])
-            run_dir = os.path.dirname(report_path)
+            report_path = resolver.resolve_report_path(str(rep["report_path"]))
+            run_dir = str(report_path.parent)
 
             audit_path = os.path.join(run_dir, "sim_abundance_audit.json")
             audit = _load_json(audit_path) if os.path.isfile(audit_path) else None
@@ -252,7 +254,7 @@ def main() -> None:
             row: dict[str, object] = {
                 "scenario_id": scenario_id,
                 "scenario": scenario_label,
-                "report_path": report_path,
+                "report_path": str(report_path),
                 "seed": seed,
                 "png_path": png_path,
             }
@@ -268,4 +270,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

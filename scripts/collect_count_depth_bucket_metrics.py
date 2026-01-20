@@ -14,6 +14,7 @@ import pandas as pd
 from count_depth_pipelines import pipeline_label
 from count_depth_scenarios import SCENARIO_CANDIDATE_COLS
 from count_depth_scenarios import attach_scenarios
+from suite_paths import ReportPathResolver
 
 
 def _load_truth_gene(path: str, *, include_reference_genes: bool) -> pd.DataFrame:
@@ -248,13 +249,15 @@ def _run_one(
     *,
     methods: list[str],
     include_reference_genes: bool,
+    resolver: ReportPathResolver,
 ) -> list[dict[str, object]]:
     report_path = str(row.get("report_path", ""))
     if not report_path:
         raise ValueError("missing report_path")
-    run_dir = os.path.dirname(report_path)
+    report_path_resolved = resolver.resolve_report_path(report_path)
+    run_dir = str(report_path_resolved.parent)
 
-    cfg = _load_report_config(report_path)
+    cfg = _load_report_config(str(report_path_resolved))
     alpha = float(cfg.get("alpha", row.get("alpha", 0.05)))
     fdr_q = float(cfg.get("fdr_q", row.get("fdr_q", 0.1)))
 
@@ -370,6 +373,7 @@ def main() -> None:
 
     methods = [str(m) for m in (args.methods or [])]
     jobs = max(1, int(args.jobs))
+    resolver = ReportPathResolver.from_grid_tsv(args.grid_tsv)
 
     rows: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
@@ -377,13 +381,19 @@ def main() -> None:
     if jobs == 1:
         for _i, r in df.iterrows():
             try:
-                rows.extend(_run_one(r, methods=methods, include_reference_genes=bool(args.include_reference_genes)))
+                rows.extend(_run_one(r, methods=methods, include_reference_genes=bool(args.include_reference_genes), resolver=resolver))
             except Exception as e:  # noqa: BLE001
                 errors.append({"report_path": str(r.get("report_path", "")), "error": str(e)})
     else:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
             futs = {
-                ex.submit(_run_one, r, methods=methods, include_reference_genes=bool(args.include_reference_genes)): str(r.get("report_path", ""))
+                ex.submit(
+                    _run_one,
+                    r,
+                    methods=methods,
+                    include_reference_genes=bool(args.include_reference_genes),
+                    resolver=resolver,
+                ): str(r.get("report_path", ""))
                 for _i, r in df.iterrows()
             }
             for fut in as_completed(futs):

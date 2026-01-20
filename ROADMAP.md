@@ -502,6 +502,8 @@ Phase D — Backfill / resume (no benchmark reruns)
 - [x] Add a “backfill” script that scans existing run directories (via `--grid-tsv` or `--root`) and writes any missing
       expected-count artifacts with `--resume` semantics.
 - [x] Parallelize backfill safely (`--jobs N`); deterministic outputs; stable ordering.
+- [x] Make suite consumers resilient to suite relocation:
+  - [x] Resolve `report_path` relative to the grid TSV location (and via `grid_runs/...` suffix) so copied suites remain runnable after pruning worktrees.
 
 Phase E — Rehydrate inputs (deterministic; avoid PMD recompute)
 - [x] Add a “rehydrate” script that can recreate missing `sim_counts.tsv`, `sim_truth_*.tsv`, and `sim_model_matrix.tsv`

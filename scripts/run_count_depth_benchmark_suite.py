@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from suite_paths import ReportPathResolver
+
 
 def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
@@ -673,6 +675,37 @@ def main() -> None:
         manifest["paths"]["grid_variant_tsvs"] = grid_tsv_paths
     manifest["paths"]["grid_tsv"] = grid_tsv
 
+    # Some downstream plots/metrics stratify by "expected count" quantifiability buckets. Ensure those
+    # additive artifacts exist as early as possible so later steps can consume them without reruns.
+    run_dirs_ok = False
+    try:
+        grid_df = pd.read_csv(grid_tsv, sep="\t")
+        if "report_path" in grid_df.columns:
+            resolver = ReportPathResolver.from_grid_tsv(grid_tsv)
+            paths = grid_df["report_path"].astype(str).dropna().tolist()
+            needed = ["sim_counts.tsv", "sim_model_matrix.tsv", "sim_truth_gene.tsv"]
+            run_dirs_ok = True
+            for p in paths:
+                run_dir = resolver.resolve_run_dir(str(p))
+                if not all((run_dir / n).is_file() for n in needed):
+                    run_dirs_ok = False
+                    break
+    except Exception:
+        run_dirs_ok = False
+
+    if run_dirs_ok:
+        backfill_cmd = [
+            sys.executable,
+            _script_path("backfill_sim_gene_expected_counts.py"),
+            "--grid-tsv",
+            grid_tsv,
+            "--resume",
+        ]
+        if int(args.jobs) > 0:
+            backfill_cmd.extend(["--jobs", str(int(args.jobs))])
+        manifest["commands"]["backfill_expected_counts"] = backfill_cmd
+        _run(backfill_cmd)
+
     agg_tsv = os.path.join(out_dir, "count_depth_grid_summary_agg.tsv")
     cmd = [
         sys.executable,
@@ -741,41 +774,13 @@ def main() -> None:
     if bool(args.bucket_metrics):
         # Bucket metrics require real run directories (sim_* inputs + per-method TSVs).
         # If a user provides a synthetic/minimal grid TSV (e.g. for plot testing), skip cleanly.
-        bucket_ok = False
-        try:
-            grid_df = pd.read_csv(grid_tsv, sep="\t")
-            if "report_path" in grid_df.columns:
-                paths = grid_df["report_path"].astype(str).dropna().tolist()
-                needed = ["sim_counts.tsv", "sim_model_matrix.tsv", "sim_truth_gene.tsv"]
-                bucket_ok = True
-                for p in paths:
-                    run_dir = os.path.dirname(str(p))
-                    if not all(os.path.isfile(os.path.join(run_dir, n)) for n in needed):
-                        bucket_ok = False
-                        break
-        except Exception:
-            bucket_ok = False
-
-        if not bucket_ok:
+        if not run_dirs_ok:
             print(
                 "bucket metrics: skipped (grid TSV report_path entries do not appear to point to full benchmark run dirs); "
                 "rerun with a real suite grid or pass --no-bucket-metrics to silence this.",
                 file=sys.stderr,
             )
         else:
-            # Ensure expected-count artifacts exist for any pre-existing suites (additive backfill; no reruns).
-            backfill_cmd = [
-                sys.executable,
-                _script_path("backfill_sim_gene_expected_counts.py"),
-                "--grid-tsv",
-                grid_tsv,
-                "--resume",
-            ]
-            if int(args.jobs) > 0:
-                backfill_cmd.extend(["--jobs", str(int(args.jobs))])
-            manifest["commands"]["backfill_expected_counts"] = backfill_cmd
-            _run(backfill_cmd)
-
             bucket_tsv = os.path.join(out_dir, "count_depth_bucket_metrics.tsv")
             cmd = [
                 sys.executable,

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from guide_pmd.expected_counts import collapse_guide_counts_to_gene_counts
 from guide_pmd.expected_counts import compute_two_group_expected_count_quantifiability
+from suite_paths import ReportPathResolver
 
 
 def _iter_run_dirs_from_root(root: str) -> list[str]:
@@ -28,8 +29,9 @@ def _iter_run_dirs_from_grid_tsv(grid_tsv: str) -> list[str]:
     df = pd.read_csv(grid_tsv, sep="\t")
     if "report_path" not in df.columns:
         raise ValueError("grid TSV must contain a 'report_path' column")
+    resolver = ReportPathResolver.from_grid_tsv(grid_tsv)
     paths = df["report_path"].astype(str).tolist()
-    run_dirs = [os.path.dirname(p) for p in paths if p]
+    run_dirs = [str(resolver.resolve_run_dir(p)) for p in paths if p]
     return sorted(set(run_dirs))
 
 

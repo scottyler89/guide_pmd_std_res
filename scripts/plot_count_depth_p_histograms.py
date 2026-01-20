@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from count_depth_scenarios import attach_scenarios
+from suite_paths import ReportPathResolver
 
 
 def _require_matplotlib():
@@ -194,6 +195,7 @@ def main() -> None:
 
     group_cols = [c for c in [str(c) for c in args.group_cols] if c in df.columns]
     os.makedirs(args.out_dir, exist_ok=True)
+    resolver = ReportPathResolver.from_grid_tsv(args.grid_tsv)
 
     plots_made = 0
     for key, sub in df.groupby(group_cols, dropna=False, sort=True):
@@ -201,7 +203,7 @@ def main() -> None:
             key = (key,)
         key_values = {c: v for c, v in zip(group_cols, key)}
         tag = _stable_group_tag(key_values)
-        report_paths = sub["report_path"].astype(str).tolist()
+        report_paths = [str(resolver.resolve_report_path(p)) for p in sub["report_path"].astype(str).tolist()]
 
         scenario_label = ""
         if "scenario" in sub.columns and int(sub["scenario"].nunique(dropna=False)) == 1:

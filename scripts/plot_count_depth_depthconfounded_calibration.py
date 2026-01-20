@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from suite_paths import ReportPathResolver
+
 
 def _require_matplotlib():
     import matplotlib
@@ -497,17 +499,7 @@ def main() -> None:
             tdms.append(float(hit))
         tdms = sorted(tdms)
 
-    # `report_path` values in suite TSVs are typically workspace-relative (e.g. ".tmp/...").
-    # Resolve them against the nearest ancestor of `--grid-tsv` that contains those paths.
-    report_root = Path.cwd().resolve()
-    sample_report = sub["report_path"].astype(str).dropna().head(1).tolist()
-    if sample_report:
-        rp = Path(sample_report[0])
-        if not rp.is_absolute() and not (report_root / rp).is_file():
-            for parent in grid_tsv_path.parents:
-                if (parent / rp).is_file():
-                    report_root = parent
-                    break
+    resolver = ReportPathResolver.from_grid_tsv(grid_tsv_path)
 
     q_grid = np.linspace(0.0, 0.2, 41, dtype=float)  # 0.00..0.20 step 0.005
     buckets = ["all_nonref", ">=5", "3-<5", "1-<3", "<1"]
@@ -603,9 +595,7 @@ def main() -> None:
 
                 for row in rm_sub.itertuples(index=False):
                     row_s = pd.Series(row._asdict())
-                    report_path = Path(str(row_s["report_path"]))
-                    if not report_path.is_absolute():
-                        report_path = report_root / report_path
+                    report_path = resolver.resolve_report_path(str(row_s["report_path"]))
                     run_dir = report_path.parent
                     depth_mode = str(row_s.get("depth_covariate_mode", ""))
                     if depth_mode not in set(_ordered_depthcov()):
