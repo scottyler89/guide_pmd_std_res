@@ -13,6 +13,8 @@ from statsmodels.genmod.families import Gaussian
 from scipy.stats import false_discovery_control as fdr
 from percent_max_diff.percent_max_diff import pmd
 
+from .contrasts import build_contrast_matrix
+
 gc.enable()
 
 ###################################
@@ -150,6 +152,135 @@ def run_glm_analysis(normalized_matrix, model_matrix, add_intercept=True):
     residuals_df = residuals_df.reindex(columns=model_matrix.index)
     residuals_df = residuals_df.reindex(index=normalized_matrix.index)
     return res_table, residuals_df
+
+
+def run_glm_analysis_with_contrasts(
+    normalized_matrix: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    contrasts: list[str],
+    add_intercept: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Run the per-feature Gaussian GLM and compute user-specified linear contrasts.
+
+    Returns:
+      - stats_df: baseline coefficient t/p table (matches `run_glm_analysis`)
+      - residuals_df: per-feature residual matrix (matches `run_glm_analysis`)
+      - contrasts_df: long table with one row per (feature, contrast)
+    """
+    # Input verification
+    if not isinstance(normalized_matrix, pd.DataFrame) or not isinstance(model_matrix, pd.DataFrame):
+        raise ValueError("Both inputs must be pandas DataFrames.")
+    if normalized_matrix.shape[1] != model_matrix.shape[0]:
+        raise ValueError("Matrices must have the same number of columns in data matrix & rows in model matrix (samples).")
+    if contrasts is None or len(contrasts) == 0:
+        raise ValueError("contrasts must not be empty")
+    try:
+        normalized_matrix.apply(pd.to_numeric)
+        model_matrix.apply(pd.to_numeric)
+    except Exception as e:
+        raise ValueError("Both matrices must contain numeric values.") from e
+    # Adding an intercept column
+    if "Intercept" not in model_matrix.columns and add_intercept:
+        model_matrix = model_matrix.copy()
+        model_matrix.insert(0, "Intercept", 1)
+
+    design_cols = model_matrix.columns.tolist()
+    contrast_L = build_contrast_matrix([str(c) for c in contrasts], [str(c) for c in design_cols])
+    L = contrast_L.to_numpy(dtype=float)
+    contrast_names = contrast_L.index.astype(str).tolist()
+    contrast_order = {name: i for i, name in enumerate(contrast_names)}
+
+    t_cols = [f"{var_name}_t" for var_name in model_matrix.columns]
+    p_cols = [f"{var_name}_p" for var_name in model_matrix.columns]
+    # Preparing lists to store results
+    all_res_dict = {}
+    residuals_dict = {}
+    contrast_rows: list[dict[str, object]] = []
+    # Iterating through each feature (row) in the normalized matrix
+    for feature_name, feature_data in normalized_matrix.iterrows():
+        feature_id = str(feature_name)
+        if feature_data.var() > 0:
+            # Merging with model_matrix
+            feature_data_df = pd.DataFrame(feature_data.T)
+            combined_data = pd.concat([feature_data_df, model_matrix], axis=1)
+            # Building and fitting the model directly
+            model = GLM(
+                combined_data.iloc[:, 0],
+                combined_data.loc[:, model_matrix.columns.tolist()],
+                family=Gaussian(),
+            )
+            results = model.fit()
+            residuals = pd.Series(results.resid_response, index=combined_data.index)
+            residuals_dict[feature_name] = residuals
+            # Storing baseline coefficient results
+            temp_dict = {}
+            for var_name, val in results.tvalues.items():
+                temp_dict[var_name + "_t"] = val
+            for var_name, val in results.pvalues.items():
+                temp_dict[var_name + "_p"] = val
+            all_res_dict[feature_name] = temp_dict
+
+            # Contrasts (reuse the same statsmodels fit results)
+            con = results.t_test(L)
+            effects = np.asarray(con.effect, dtype=float).ravel()
+            sds = np.asarray(con.sd, dtype=float).ravel()
+            tvals = np.asarray(con.tvalue, dtype=float).ravel()
+            pvals = np.asarray(con.pvalue, dtype=float).ravel()
+            for name, est, se, tval, pval in zip(contrast_names, effects, sds, tvals, pvals, strict=True):
+                contrast_rows.append(
+                    {
+                        "guide_id": feature_id,
+                        "contrast": str(name),
+                        "estimate": float(est) if np.isfinite(est) else np.nan,
+                        "se": float(se) if np.isfinite(se) else np.nan,
+                        "t": float(tval) if np.isfinite(tval) else np.nan,
+                        "p": float(pval) if np.isfinite(pval) else np.nan,
+                        "p_adj": np.nan,
+                    }
+                )
+        else:
+            # Mirror baseline behavior: keep placeholder rows for deterministic output.
+            for name in contrast_names:
+                contrast_rows.append(
+                    {
+                        "guide_id": feature_id,
+                        "contrast": str(name),
+                        "estimate": np.nan,
+                        "se": np.nan,
+                        "t": np.nan,
+                        "p": np.nan,
+                        "p_adj": np.nan,
+                    }
+                )
+
+    # Creating and returning the output DataFrame
+    res_table = pd.DataFrame(all_res_dict).T
+    res_table = res_table.reindex(columns=t_cols + p_cols)
+    del all_res_dict
+    gc.collect()
+    for p_col in p_cols:
+        res_table[p_col + "_adj"] = nan_fdr(res_table[p_col].to_numpy())
+    res_table = res_table.reindex(index=normalized_matrix.index)
+    residuals_df = pd.DataFrame(residuals_dict).T
+    residuals_df = residuals_df.reindex(columns=model_matrix.index)
+    residuals_df = residuals_df.reindex(index=normalized_matrix.index)
+
+    contrasts_df = pd.DataFrame(contrast_rows)
+    if not contrasts_df.empty:
+        contrasts_df["contrast"] = contrasts_df["contrast"].astype(str)
+        contrasts_df["guide_id"] = contrasts_df["guide_id"].astype(str)
+        contrasts_df["p_adj"] = contrasts_df.groupby("contrast", sort=False)["p"].transform(
+            lambda s: nan_fdr(pd.to_numeric(s, errors="coerce").to_numpy(dtype=float))
+        )
+        contrasts_df["_contrast_order"] = contrasts_df["contrast"].map(contrast_order).astype(int)
+        contrasts_df = (
+            contrasts_df.sort_values(["_contrast_order", "guide_id"], kind="mergesort")
+            .drop(columns=["_contrast_order"])
+            .reset_index(drop=True)
+        )
+    return res_table, residuals_df, contrasts_df
 
 
 def get_pmd_std_res(input_file, in_annotation_cols, n_boot = 100, seed = 123456, sep = "\t"):
@@ -291,6 +422,7 @@ def pmd_std_res_and_stats(input_file,
                             n_boot = 100, 
                             seed = 123456, 
                             file_sep="tsv",
+                            contrasts: list[str] | None = None,
                             std_res_file: str | None = None,
                             gene_level: bool = True,
                             focal_vars: list[str] | None = None,
@@ -322,6 +454,7 @@ def pmd_std_res_and_stats(input_file,
     :param n_boot: Number of bootstrap shuffles to do for null (default = 100).
     :param seed: random seed (default = 123456).
     :param file_sep: tsv for tab separapted, csv for comma (default = tsv).
+    :param contrasts: Optional linear contrast expression(s) to test on the guide-level GLM (additive output).
     """
     if pre_regress_vars is None:
         pre_regress_vars = []
@@ -369,6 +502,9 @@ def pmd_std_res_and_stats(input_file,
     resids_df = None
     comb_stats = None
     first_regressed = None
+    stats_contrasts_df = None
+    if contrasts is not None and len(contrasts) > 0 and model_matrix_file is None:
+        raise ValueError("contrasts require model_matrix_file (no model matrix provided)")
     # If we're running the stats, then get them going:
     if model_matrix_file is not None:
         print("running the statistics, using the specified model matrix")
@@ -387,16 +523,34 @@ def pmd_std_res_and_stats(input_file,
             _, first_regressed = run_glm_analysis(std_res, mm[pre_regress_vars])
             # In this case, we've already modeled and accounted for the intercept, 
             # so we exclude it from the second model in the serial modeling
-            stats_df, resids_df = run_glm_analysis(first_regressed, mm[keep_cols], add_intercept=False)
+            if contrasts is not None and len(contrasts) > 0:
+                stats_df, resids_df, stats_contrasts_df = run_glm_analysis_with_contrasts(
+                    first_regressed,
+                    mm[keep_cols],
+                    contrasts=[str(c) for c in contrasts],
+                    add_intercept=False,
+                )
+            else:
+                stats_df, resids_df = run_glm_analysis(first_regressed, mm[keep_cols], add_intercept=False)
             design_cols = len(keep_cols)
         else:
             keep_cols = mm.columns
-            stats_df, resids_df = run_glm_analysis(std_res, mm[keep_cols])
+            if contrasts is not None and len(contrasts) > 0:
+                stats_df, resids_df, stats_contrasts_df = run_glm_analysis_with_contrasts(
+                    std_res,
+                    mm[keep_cols],
+                    contrasts=[str(c) for c in contrasts],
+                )
+            else:
+                stats_df, resids_df = run_glm_analysis(std_res, mm[keep_cols])
             # Back-compat: dof for Stouffer-combined p-values is computed from the
             # user-provided model-matrix columns (even if an intercept is added).
             design_cols = len(keep_cols)
         stats_df.to_csv(output_stats_file, sep="\t")
         resids_df.to_csv(resids_file, sep="\t")
+        if stats_contrasts_df is not None:
+            out_path = os.path.join(output_dir, "PMD_std_res_stats_contrasts.tsv")
+            stats_contrasts_df.to_csv(out_path, sep="\t", index=False)
         if p_combine_idx is not None:
             p_combine_idx = int(p_combine_idx)
             if p_combine_idx < 1:
@@ -797,6 +951,160 @@ def pmd_std_res_and_stats(input_file,
                 gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_tmeta_guides.tsv")
                 gene_tmeta_guides.to_csv(gene_out_path, sep="\t", index=False)
 
+            # --- Gene-level contrasts (additive) ---
+            if contrasts is not None and len(contrasts) > 0:
+                contrast_focal_vars = [str(c) for c in contrasts]
+                gene_meta_contrasts = None
+                gene_stouffer_contrasts = None
+                gene_qc_contrasts = None
+                gene_flagged_contrasts = None
+                gene_mixture_contrasts = None
+                gene_mixture_guides_contrasts = None
+                gene_tmeta_contrasts = None
+                gene_tmeta_guides_contrasts = None
+
+                if "lmm" in gene_methods:
+                    print("gene-level contrasts: skipping lmm (not implemented yet)", flush=True)
+
+                if per_guide_ols is None:
+                    # Per-guide slopes are always required for contrast aggregation.
+                    gene_mm_aligned = gene_level_mod._align_model_matrix(gene_mm, list(gene_response.columns))
+                    per_guide_ols = gene_level_mod.fit_per_guide_ols(
+                        gene_response,
+                        gene_mm_aligned,
+                        focal_vars=focal_vars,
+                        add_intercept=gene_add_intercept,
+                    )
+
+                gene_mm_aligned = gene_level_mod._align_model_matrix(gene_mm, list(gene_response.columns))
+                per_guide_contrasts = gene_level_mod.fit_per_guide_contrasts(
+                    gene_response,
+                    gene_mm_aligned,
+                    contrasts=contrast_focal_vars,
+                    add_intercept=gene_add_intercept,
+                )
+                contrast_names = sorted(per_guide_contrasts["focal_var"].astype(str).unique().tolist())
+
+                needs_contrast_meta = any(m in gene_methods for m in ["meta", "flagged", "mixture", "tmeta"])
+                if needs_contrast_meta:
+                    gene_meta_contrasts = gene_level_mod.compute_gene_meta(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        focal_vars=contrast_names,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        per_guide_ols=per_guide_contrasts,
+                    )
+                    if "meta" in gene_methods:
+                        os.makedirs(gene_out_dir, exist_ok=True)
+                        gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta_contrasts.tsv")
+                        gene_meta_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                if "stouffer" in gene_methods:
+                    from . import gene_level_stouffer as gene_level_stouffer_mod
+
+                    gene_stouffer_contrasts = gene_level_stouffer_mod.compute_gene_stouffer(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        focal_vars=contrast_names,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        per_guide_ols=per_guide_contrasts,
+                    )
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_stouffer_contrasts.tsv")
+                    gene_stouffer_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                needs_contrast_qc = any(m in gene_methods for m in ["qc", "flagged", "mixture", "tmeta"])
+                if needs_contrast_qc:
+                    from . import gene_level_qc as gene_level_qc_mod
+
+                    gene_qc_contrasts = gene_level_qc_mod.compute_gene_qc(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        focal_vars=contrast_names,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        residual_matrix=resids_df,
+                        per_guide_ols=per_guide_contrasts,
+                    )
+                    if "qc" in gene_methods:
+                        os.makedirs(gene_out_dir, exist_ok=True)
+                        gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_qc_contrasts.tsv")
+                        gene_qc_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                needs_contrast_flag_table = any(m in gene_methods for m in ["flagged", "mixture", "tmeta"])
+                if needs_contrast_flag_table:
+                    from . import gene_level_flagging as gene_level_flagging_mod
+
+                    if gene_meta_contrasts is None:
+                        raise RuntimeError("internal error: gene_meta_contrasts is required for contrast flagging")  # pragma: no cover
+                    if gene_qc_contrasts is None:
+                        raise RuntimeError("internal error: gene_qc_contrasts is required for contrast flagging")  # pragma: no cover
+
+                    flag_cfg = gene_level_flagging_mod.GeneFlaggingConfig()
+                    flag_cfg.validate()
+                    gene_flagged_contrasts = gene_level_flagging_mod.compute_gene_flag_table(
+                        gene_meta_contrasts, gene_qc_contrasts, config=flag_cfg
+                    )
+                    if "flagged" in gene_methods:
+                        os.makedirs(gene_out_dir, exist_ok=True)
+                        gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_flagged_contrasts.tsv")
+                        gene_flagged_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                if "mixture" in gene_methods:
+                    from . import gene_level_mixture as gene_level_mixture_mod
+
+                    if gene_meta_contrasts is None:
+                        raise RuntimeError("internal error: gene_meta_contrasts is required for contrast mixture")  # pragma: no cover
+                    if gene_flagged_contrasts is None:
+                        raise RuntimeError("internal error: gene_flagged_contrasts is required for contrast mixture")  # pragma: no cover
+
+                    cfg = gene_level_mixture_mod.GeneMixtureConfig(scope="flagged")
+                    cfg.validate()
+                    gene_mixture_contrasts, gene_mixture_guides_contrasts = gene_level_mixture_mod.compute_gene_mixture(
+                        per_guide_contrasts,
+                        annotation_table,
+                        focal_vars=contrast_names,
+                        gene_id_col=gene_id_col,
+                        meta_results=gene_meta_contrasts,
+                        flag_table=gene_flagged_contrasts,
+                        config=cfg,
+                    )
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_mixture_contrasts.tsv")
+                    gene_mixture_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_mixture_guides_contrasts.tsv")
+                    gene_mixture_guides_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                if "tmeta" in gene_methods:
+                    from . import gene_level_tmeta as gene_level_tmeta_mod
+
+                    if gene_meta_contrasts is None:
+                        raise RuntimeError("internal error: gene_meta_contrasts is required for contrast tmeta")  # pragma: no cover
+                    if gene_flagged_contrasts is None:
+                        raise RuntimeError("internal error: gene_flagged_contrasts is required for contrast tmeta")  # pragma: no cover
+
+                    cfg = gene_level_tmeta_mod.GeneTMetaConfig(scope="flagged")
+                    cfg.validate()
+                    gene_tmeta_contrasts, gene_tmeta_guides_contrasts = gene_level_tmeta_mod.compute_gene_tmeta(
+                        per_guide_contrasts,
+                        annotation_table,
+                        focal_vars=contrast_names,
+                        gene_id_col=gene_id_col,
+                        meta_results=gene_meta_contrasts,
+                        flag_table=gene_flagged_contrasts,
+                        config=cfg,
+                    )
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_tmeta_contrasts.tsv")
+                    gene_tmeta_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_tmeta_guides_contrasts.tsv")
+                    gene_tmeta_guides_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
             if gene_figures:
                 from . import gene_level_figures as gene_level_figures_mod
 
@@ -908,6 +1216,14 @@ def main():
         type=str,
         default=None,
         help="Optional precomputed PMD_std_res.tsv (skips PMD bootstrap computation).",
+    )
+    parser.add_argument(
+        "--contrast",
+        dest="contrasts",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Linear contrast expression(s), e.g. \"C1_high - C1_low\" (additive output: PMD_std_res_stats_contrasts.tsv).",
     )
     parser.add_argument(
         "--gene-level",
@@ -1057,6 +1373,7 @@ def main():
                           n_boot = args.n_boot, 
                           seed = args.seed,
                           file_sep=args.file_type,
+                          contrasts=args.contrasts,
                           std_res_file=args.std_res_file,
                           gene_level=args.gene_level,
                           focal_vars=args.focal_vars,

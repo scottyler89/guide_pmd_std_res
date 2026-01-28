@@ -235,6 +235,47 @@ Goal: diagnostics first, robust methods as sensitivity / targeted follow-ups (De
 - [x] Update `README.md` with gene-level usage examples.
 - [ ] Version + changelog entry + tag once this ships.
 
+#### P3.11 — Linear Contrasts (Guide + Gene)
+Goal: add **significance of user-specified linear contrasts** of model terms (e.g., `"C1_high - C1_low"`), reusing
+`statsmodels` fit results and keeping all new outputs strictly additive.
+
+Back-Compat Contract (non-negotiable)
+- Baseline TSVs (`PMD_std_res*.tsv`) remain **byte-for-byte identical** for the same inputs when contrasts are not requested.
+- Contrast analyses write to **new filenames** (no extra columns added to existing baseline outputs).
+
+Phase A — Contrast specification + parsing (SSoT; safe)
+- [x] Add a safe, deterministic linear-expression parser for contrasts (supports `+`, `-`, `*`, `/`, parentheses, numeric scalars, and model-matrix column names).
+- [x] Support optional names, e.g. `NAME=expr` (fallback: name is the expression string).
+- [x] Validate that referenced terms exist in the final design matrix used for inference (incl. pre-regress mode behavior).
+
+Phase B — Guide-level contrasts (reuse `statsmodels` GLM results)
+- [x] Compute per-feature contrast estimates + SE + t/z + p via `results.t_test(L)`.
+- [x] Output (additive; stable sort): `PMD_std_res_stats_contrasts.tsv` (long format: `guide_id, contrast, estimate, se, t, p, p_adj`).
+- [x] Compute FDR per contrast across guides (nan-aware).
+
+Phase C — Gene-level contrasts (method-appropriate)
+- [x] Compute per-guide contrast slopes from the shared OLS design covariance (`(X'X)^{-1}`) and per-guide residual variance.
+- [x] Plan B meta-analysis on contrasts: `PMD_std_res_gene_meta_contrasts.tsv`.
+- [x] Stouffer combined statistics on contrasts: `PMD_std_res_gene_stouffer_contrasts.tsv`.
+- [x] QC + flagging + mixture + t-meta on contrasts (reusing per-guide contrast slopes + meta outputs):
+  - [x] `PMD_std_res_gene_qc_contrasts.tsv`
+  - [x] `PMD_std_res_gene_flagged_contrasts.tsv`
+  - [x] `PMD_std_res_gene_mixture_contrasts.tsv`, `PMD_std_res_gene_mixture_guides_contrasts.tsv`
+  - [x] `PMD_std_res_gene_tmeta_contrasts.tsv`, `PMD_std_res_gene_tmeta_guides_contrasts.tsv`
+- [ ] (Stretch) Plan A LMM contrasts: Wald test for `L * beta = 0` using mixed-model fixed-effect covariance:
+  - [ ] `PMD_std_res_gene_lmm_contrasts.tsv` (define random-effects structure policy explicitly; no silent heuristics).
+
+Phase D — CLI + post-run entrypoint
+- [x] CLI: add `--contrast "expr" ...` to `guide-pmd-std-res` (additive outputs; no baseline changes).
+- [x] Add a new console script `guide-pmd-contrasts` that computes contrast tables **post hoc** from existing `PMD_std_res.tsv` + model matrix (+ counts file for annotations), without recomputing PMD.
+- [x] Add Python API entry point(s) to compute contrasts from in-memory matrices (no IO).
+
+Phase E — Tests + docs
+- [x] Unit tests for expression parsing and validation (incl. missing terms and malformed expressions).
+- [x] Unit tests: GLM contrast p-values match `statsmodels` `t_test` and are stable under feature filtering.
+- [x] Integration tests: new contrast TSVs are produced; baseline golden hashes remain unchanged.
+- [x] Update `README.md` with 1–2 contrast examples (esp. one-hot designs).
+
 ---
 
 ### P4 — Ground-Truth Benchmarks (Count Depth + Confounding)

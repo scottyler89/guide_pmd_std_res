@@ -9,6 +9,8 @@ from scipy.stats import chi2
 from scipy.stats import norm
 from scipy.stats import t as student_t
 
+from .contrasts import build_contrast_matrix
+
 
 def _nan_fdr(p_values: Sequence[float]) -> np.ndarray:
     p_values = np.asarray(p_values, dtype=float)
@@ -130,6 +132,113 @@ def fit_per_guide_ols(
                     "se": float(s) if np.isfinite(s) else np.nan,
                     "t": float(t_val) if np.isfinite(t_val) else np.nan,
                     "p": float(p_val) if np.isfinite(p_val) else np.nan,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def fit_per_guide_contrasts(
+    response_matrix: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    contrasts: Sequence[str],
+    add_intercept: bool = True,
+) -> pd.DataFrame:
+    """
+    Compute per-guide OLS contrast estimates from a shared design matrix.
+
+    This fits the full OLS model once (vectorized across guides) and then returns
+    a long table of contrast-level slopes with t/p computed from the per-guide
+    residual variance and the shared `(X'X)^{-1}` geometry.
+
+    Output schema matches `fit_per_guide_ols` (with `focal_var` set to the contrast name):
+      guide_id, focal_var, beta, se, t, p
+    """
+    if not isinstance(response_matrix, pd.DataFrame) or not isinstance(model_matrix, pd.DataFrame):
+        raise ValueError("response_matrix and model_matrix must be pandas DataFrames")
+
+    contrasts = [str(c) for c in contrasts]
+    if not contrasts:
+        raise ValueError("contrasts must not be empty")
+
+    mm = model_matrix.copy()
+    if add_intercept and "Intercept" not in mm.columns:
+        mm.insert(0, "Intercept", 1.0)
+
+    try:
+        mm = mm.apply(pd.to_numeric)
+    except Exception as exc:  # pragma: no cover
+        raise ValueError("model_matrix must be numeric") from exc
+
+    coef_names = [str(c) for c in mm.columns]
+    contrast_L = build_contrast_matrix(list(contrasts), list(coef_names))
+    L = contrast_L.to_numpy(dtype=float)
+    contrast_names = contrast_L.index.astype(str).tolist()
+
+    X = mm.to_numpy(dtype=float)
+
+    y_wide = response_matrix.to_numpy(dtype=float)
+    if not np.isfinite(y_wide).all():
+        raise ValueError("response_matrix must contain only finite values")
+
+    # Vectorized OLS across all guides:
+    #   Y is (n_samples x n_guides); X is (n_samples x p)
+    Y = y_wide.T
+    n_samples, p = X.shape
+    df_resid = int(n_samples - p)
+
+    if df_resid <= 0:
+        rows: list[dict[str, object]] = []
+        for guide_id in response_matrix.index.astype(str).tolist():
+            for name in contrast_names:
+                rows.append(
+                    {
+                        "guide_id": guide_id,
+                        "focal_var": str(name),
+                        "beta": np.nan,
+                        "se": np.nan,
+                        "t": np.nan,
+                        "p": np.nan,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    XtX = X.T @ X
+    try:
+        XtX_inv = np.linalg.inv(XtX)
+    except np.linalg.LinAlgError:
+        XtX_inv = np.linalg.pinv(XtX)
+
+    beta_hat = XtX_inv @ (X.T @ Y)  # (p x n_guides)
+    resid = Y - (X @ beta_hat)  # (n_samples x n_guides)
+    rss = np.sum(resid**2, axis=0)
+    sigma2 = rss / float(df_resid)  # (n_guides,)
+
+    # For each contrast i: Var(L_i beta_hat_j) = sigma2_j * (L_i XtX_inv L_i^T)
+    quad = np.einsum("ij,jk,ik->i", L, XtX_inv, L)  # (n_contrasts,)
+    quad = np.maximum(0.0, quad.astype(float))
+
+    est = (L @ beta_hat).astype(float)  # (n_contrasts x n_guides)
+
+    rows: list[dict[str, object]] = []
+    guide_ids = response_matrix.index.astype(str).tolist()
+    for i, name in enumerate(contrast_names):
+        se = np.sqrt(np.maximum(0.0, sigma2 * quad[i])).astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tvals = est[i, :] / se
+        pvals = 2.0 * student_t.sf(np.abs(tvals), df=int(df_resid))
+        for guide_id, beta, se_v, t_v, p_v in zip(
+            guide_ids, est[i, :].tolist(), se.tolist(), tvals.tolist(), pvals.tolist(), strict=True
+        ):
+            rows.append(
+                {
+                    "guide_id": guide_id,
+                    "focal_var": str(name),
+                    "beta": float(beta) if np.isfinite(beta) else np.nan,
+                    "se": float(se_v) if np.isfinite(se_v) else np.nan,
+                    "t": float(t_v) if np.isfinite(t_v) else np.nan,
+                    "p": float(p_v) if np.isfinite(p_v) else np.nan,
                 }
             )
 

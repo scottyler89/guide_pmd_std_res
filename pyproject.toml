@@ -41,6 +41,7 @@ docs = [
 
 [project.scripts]
 guide-pmd-std-res = "guide_pmd.pmd_std_res_guide_counts:main"
+guide-pmd-contrasts = "guide_pmd.contrasts_posthoc:main"
 
 [tool.setuptools]
 include-package-data = false

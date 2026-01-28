@@ -457,6 +457,19 @@ def main() -> None:
 
     # Depth-confounded signal condition: no other scenario stressors enabled.
     sub = grid.copy()
+    # Back-compat: older grid TSVs may not include newer scenario columns.
+    # Treat missing columns as their "no additional stressor" defaults so the
+    # calibration plots can still run on minimal suite summaries.
+    defaults = {
+        "n_batches": 1,
+        "batch_confounding_strength": 0.0,
+        "batch_depth_log_sd": 0.0,
+        "offtarget_guide_frac": 0.0,
+        "nb_overdispersion": 0.0,
+    }
+    for col, default in defaults.items():
+        if col not in sub.columns:
+            sub[col] = default
     sub["treatment_depth_multiplier"] = pd.to_numeric(sub["treatment_depth_multiplier"], errors="coerce")
     sub["frac_signal"] = pd.to_numeric(sub["frac_signal"], errors="coerce")
     sub["n_batches"] = pd.to_numeric(sub["n_batches"], errors="coerce")
@@ -601,7 +614,12 @@ def main() -> None:
                     if depth_mode not in set(_ordered_depthcov()):
                         continue
 
-                    run_tables = _load_run_long_tables(run_dir)
+                    try:
+                        run_tables = _load_run_long_tables(run_dir)
+                    except FileNotFoundError:
+                        # Suite-level plots should be resilient to minimal grid TSVs
+                        # used in smoke tests (report-only; no per-run artifacts).
+                        continue
                     for method in _ordered_methods():
                         df_long = run_tables.get(method, pd.DataFrame())
                         if df_long.empty:

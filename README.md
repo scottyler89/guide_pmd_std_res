@@ -35,6 +35,7 @@ This script can be easily installed with pip:
 | `-seed`                  | `int`   | Random seed for reproducibility.                                                                                                                     | `123456`     |
 | `-file_type`             | `str`   | File type of the input data (`tsv` or `csv`).                                                                                                        | `tsv`        |
 | `--std-res-file`         | `str`   | Optional precomputed `PMD_std_res.tsv` to skip the PMD bootstrap step.                                                                               | `None`       |
+| `--contrast`             | `list`  | Optional linear contrast expression(s) to test on the guide-level GLM (writes `PMD_std_res_stats_contrasts.tsv`).                                    | `None`       |
 | `--gene-level` / `--no-gene-level` | flag | Enable/disable **gene-level aggregation outputs** (baseline outputs remain unchanged).                                                     | `True`       |
 | `--focal-vars`           | `list`  | Model-matrix column name(s) to compute gene-level effects for (default: all non-Intercept columns).                                              | `None`       |
 | `--gene-id-col`          | `int`   | 0-based column index in the original input file for the gene id (0 is the guide id/index).                                                          | `1`          |
@@ -72,6 +73,20 @@ guide-pmd-std-res \
     -file_type tsv \
     --focal-vars treatment \
     --gene-forest-genes A
+```
+
+### Post-run contrasts (no PMD recompute)
+
+If you already have a `PMD_std_res.tsv` on disk and just want contrast tables:
+
+```bash
+guide-pmd-contrasts \
+    -in_file data/input_data.tsv \
+    -out_dir results/ \
+    -model_matrix_file data/model_matrix.tsv \
+    --std-res-file results/PMD_std_res.tsv \
+    --contrast "C1_high - C1_low" "C2_high - C1_high" \
+    --gene-level
 ```
 
 ---
