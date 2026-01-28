@@ -32,6 +32,20 @@ By default:
 - Gene-level TSVs are written under ``<out_dir>/gene_level/``.
 - Gene-level figures are written under ``<out_dir>/figures/gene_level/``.
 
+Linear contrasts
+----------------
+
+When one or more ``--contrast`` expressions are provided, gene-level methods can also be run on those contrasts.
+In this mode, each contrast name is treated like a focal var, and contrast-specific gene-level outputs are written
+with ``_contrasts`` suffixes (all additive; no baseline schema changes).
+
+Examples:
+
+- ``PMD_std_res_gene_meta_contrasts.tsv``
+- ``PMD_std_res_gene_stouffer_contrasts.tsv``
+- ``PMD_std_res_gene_lmm_selection_contrasts.tsv``
+- ``PMD_std_res_gene_lmm_contrasts.tsv`` (includes both LRT and Wald columns, mirroring ``PMD_std_res_gene_lmm.tsv``)
+
 Estimands
 ---------
 

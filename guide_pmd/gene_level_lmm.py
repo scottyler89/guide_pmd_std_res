@@ -56,15 +56,23 @@ GENE_LMM_CONTRAST_COLUMNS = [
     "method",
     "model",
     "optimizer_full",
+    "optimizer_null",
     "theta",
     "se_theta",
     "wald_z",
     "wald_p",
     "wald_ok",
     "wald_p_adj",
+    "lrt_stat",
+    "lrt_stat_raw",
+    "lrt_p",
+    "lrt_ok",
+    "lrt_p_adj",
+    "lrt_clipped",
     "sigma_alpha",
     "tau",
     "converged_full",
+    "converged_null",
     "m_guides_total",
     "m_guides_used",
     "n_samples",
@@ -104,7 +112,49 @@ def finalize_gene_lmm_contrast_table(out: pd.DataFrame) -> pd.DataFrame:
     out = out[GENE_LMM_CONTRAST_COLUMNS].sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
     if not out.empty:
         out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
+        out["lrt_p_adj"] = out.groupby("focal_var", sort=False)["lrt_p"].transform(_nan_fdr)
     return out
+
+
+def _build_contrast_null_exog(exog: pd.DataFrame, l: np.ndarray) -> pd.DataFrame | None:
+    """
+    Build a fixed-effect design matrix for the null hypothesis l^T beta = 0.
+
+    We express one coefficient (pivot) as a linear function of the remaining coefficients,
+    yielding a nested (p-1)-parameter model with the same response space as the linear
+    constraint.
+    """
+    if exog.shape[1] <= 1:
+        return None
+    l = np.asarray(l, dtype=float).reshape(-1)
+    if l.shape[0] != exog.shape[1]:
+        raise ValueError("contrast length must match number of model_matrix columns")
+
+    abs_l = np.abs(l)
+    if not np.any(abs_l > 0.0):  # pragma: no cover
+        return None
+    pivot = int(np.argmax(abs_l))
+    pivot_weight = float(l[pivot])
+    if pivot_weight == 0.0:  # pragma: no cover
+        return None
+
+    X_pivot = exog.iloc[:, pivot].to_numpy(dtype=float)
+
+    cols = list(exog.columns)
+    out_cols: list[str] = []
+    out_data: dict[str, np.ndarray] = {}
+    for j, col in enumerate(cols):
+        if j == pivot:
+            continue
+        w = float(l[j])
+        xj = exog.iloc[:, j].to_numpy(dtype=float)
+        if w == 0.0:
+            out_data[str(col)] = xj
+        else:
+            out_data[str(col)] = xj - (w / pivot_weight) * X_pivot
+        out_cols.append(str(col))
+
+    return pd.DataFrame(out_data, index=exog.index, columns=out_cols, dtype=float)
 
 
 def _prepare_model_matrix(model_matrix: pd.DataFrame, *, add_intercept: bool) -> pd.DataFrame:
@@ -925,15 +975,23 @@ def _fit_gene_lmm_contrast_task(
             "method": "failed",
             "model": "",
             "optimizer_full": "",
+            "optimizer_null": "",
             "theta": np.nan,
             "se_theta": np.nan,
             "wald_z": np.nan,
             "wald_p": np.nan,
             "wald_ok": False,
             "wald_p_adj": np.nan,
+            "lrt_stat": np.nan,
+            "lrt_stat_raw": np.nan,
+            "lrt_p": np.nan,
+            "lrt_ok": False,
+            "lrt_p_adj": np.nan,
+            "lrt_clipped": False,
             "sigma_alpha": np.nan,
             "tau": np.nan,
             "converged_full": False,
+            "converged_null": False,
             "m_guides_total": 0.0,
             "m_guides_used": 0.0,
             "n_samples": float(n_samples),
@@ -955,116 +1013,220 @@ def _fit_gene_lmm_contrast_task(
     contrast_re = exog.to_numpy(dtype=float) @ np.asarray(l_random, dtype=float).reshape(-1)
     contrast_re = contrast_re.astype(float)
 
-    use_random_slope = (
+    random_slope = (
         bool(allow_random_slope)
         and (m_guides_total >= int(min_guides_random_slope))
         and bool(np.nanstd(contrast_re) > 0.0)
     )
-    if use_random_slope:
-        exog_re = pd.DataFrame(
-            {
-                "Intercept_re": np.ones(long_df.shape[0], dtype=float),
-                "contrast_re": contrast_re,
-            },
-            index=long_df.index,
+    def fit_with_structure(use_random_slope: bool) -> dict[str, object]:
+        if use_random_slope:
+            exog_re = pd.DataFrame(
+                {
+                    "Intercept_re": np.ones(long_df.shape[0], dtype=float),
+                    "contrast_re": contrast_re,
+                },
+                index=long_df.index,
+            )
+            model_name = "ri+rs"
+        else:
+            exog_re = pd.DataFrame({"Intercept_re": np.ones(long_df.shape[0], dtype=float)}, index=long_df.index)
+            model_name = "ri"
+
+        exog_null = _build_contrast_null_exog(exog, np.asarray(l_fixed, dtype=float))
+        if exog_null is None:
+            return {
+                "ok": False,
+                "model": model_name,
+                "optimizer_full": "",
+                "optimizer_null": "",
+                "full_res": None,
+                "null_res": None,
+                "converged_full": False,
+                "converged_null": False,
+                "fit_error": "null_design_unavailable",
+            }
+
+        full_res, full_err = _fit_mixedlm(
+            endog,
+            exog,
+            groups=groups,
+            exog_re=exog_re,
+            max_iter=max_iter,
         )
-        model_name = "ri+rs"
-    else:
-        exog_re = pd.DataFrame({"Intercept_re": np.ones(long_df.shape[0], dtype=float)}, index=long_df.index)
-        model_name = "ri"
+        null_res, null_err = _fit_mixedlm(
+            endog,
+            exog_null,
+            groups=groups,
+            exog_re=exog_re,
+            max_iter=max_iter,
+        )
 
-    full_res, full_err = _fit_mixedlm(
-        endog,
-        exog,
-        groups=groups,
-        exog_re=exog_re,
-        max_iter=max_iter,
-    )
-    converged_full = bool(getattr(full_res, "converged", False)) if full_res is not None else False
-    optimizer_full = getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else ""
+        converged_full = bool(getattr(full_res, "converged", False)) if full_res is not None else False
+        converged_null = bool(getattr(null_res, "converged", False)) if null_res is not None else False
 
-    if (full_res is None) or (not converged_full):
-        if fallback_to_meta and (meta_lookup is not None):
-            meta_row = meta_lookup.get((str(gene_id), str(contrast_name)))
-            if meta_row is not None:
-                theta = float(meta_row["theta"])
-                se_theta = float(meta_row["se_theta"])
-                z = float(meta_row["z"])
-                p = float(meta_row["p"])
-                tau = float(meta_row.get("tau", np.nan))
-                return {
-                    "gene_id": str(gene_id),
-                    "focal_var": str(contrast_name),
-                    "method": "meta_fallback",
-                    "model": "",
-                    "optimizer_full": "",
-                    "theta": theta,
-                    "se_theta": se_theta,
-                    "wald_z": z,
-                    "wald_p": p,
-                    "wald_ok": bool(np.isfinite(p)),
-                    "wald_p_adj": np.nan,
-                    "sigma_alpha": np.nan,
-                    "tau": tau,
-                    "converged_full": False,
-                    "m_guides_total": float(m_guides_total),
-                    "m_guides_used": float(meta_row.get("m_guides_used", m_guides_total)),
-                    "n_samples": float(n_samples),
-                    "n_obs": float(n_obs),
-                    "fit_error": str(full_err or "non-converged fit"),
-                }
+        fit_error = "; ".join([e for e in [full_err, null_err] if e]) if (full_err or null_err) else ""
+        if (full_res is None) or (null_res is None) or (not converged_full) or (not converged_null):
+            return {
+                "ok": False,
+                "model": model_name,
+                "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else "",
+                "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", "") if null_res is not None else "",
+                "full_res": full_res,
+                "null_res": null_res,
+                "converged_full": converged_full,
+                "converged_null": converged_null,
+                "fit_error": fit_error or "non-converged fit",
+            }
+
+        con = full_res.t_test(np.asarray(l_fixed, dtype=float).reshape(1, -1))
+        theta = float(np.asarray(con.effect).ravel()[0])
+        se_theta = float(np.asarray(con.sd).ravel()[0])
+        wald_z = float(np.asarray(con.tvalue).ravel()[0])
+        wald_p = float(np.asarray(con.pvalue).ravel()[0])
+
+        ll_full = float(getattr(full_res, "llf", np.nan))
+        ll_null = float(getattr(null_res, "llf", np.nan))
+        lr_raw = float(2.0 * (ll_full - ll_null)) if (np.isfinite(ll_full) and np.isfinite(ll_null)) else np.nan
+        lr = lr_raw
+        lrt_clipped = False
+        if np.isfinite(lr_raw) and lr_raw < 0.0:
+            lr = 0.0
+            lrt_clipped = True
+        lrt_p = float(chi2.sf(lr, df=1)) if np.isfinite(lr) else np.nan
+
+        sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
+        return {
+            "ok": True,
+            "model": model_name,
+            "optimizer_full": getattr(full_res, "_guide_pmd_optimizer", ""),
+            "optimizer_null": getattr(null_res, "_guide_pmd_optimizer", ""),
+            "theta": theta if np.isfinite(theta) else np.nan,
+            "se_theta": se_theta if np.isfinite(se_theta) else np.nan,
+            "wald_z": wald_z if np.isfinite(wald_z) else np.nan,
+            "wald_p": wald_p if np.isfinite(wald_p) else np.nan,
+            "lrt_stat": lr,
+            "lrt_stat_raw": lr_raw,
+            "lrt_p": lrt_p,
+            "lrt_ok": bool(np.isfinite(lrt_p)),
+            "lrt_clipped": bool(lrt_clipped),
+            "sigma_alpha": sigma_alpha,
+            "tau": tau,
+            "converged_full": converged_full,
+            "converged_null": converged_null,
+            "fit_error": "",
+        }
+
+    res = fit_with_structure(random_slope)
+    if (not res["ok"]) and random_slope:
+        res = fit_with_structure(False)
+
+    if res["ok"]:
+        lrt_ok = bool(res["lrt_ok"])
+        wald_ok = bool(np.isfinite(res["wald_p"]))
+        fit_error = ""
+        if not lrt_ok:
+            fit_error = "lrt_invalid"
+        if (not wald_ok) and fit_error:
+            fit_error = f"{fit_error}; wald_invalid"
+        elif not wald_ok:
+            fit_error = "wald_invalid"
 
         return {
             "gene_id": str(gene_id),
             "focal_var": str(contrast_name),
-            "method": "failed",
-            "model": model_name,
-            "optimizer_full": optimizer_full,
-            "theta": np.nan,
-            "se_theta": np.nan,
-            "wald_z": np.nan,
-            "wald_p": np.nan,
-            "wald_ok": False,
+            "method": "lmm",
+            "model": res["model"],
+            "optimizer_full": res.get("optimizer_full", ""),
+            "optimizer_null": res.get("optimizer_null", ""),
+            "theta": res["theta"],
+            "se_theta": res["se_theta"],
+            "wald_z": res["wald_z"],
+            "wald_p": res["wald_p"],
+            "wald_ok": wald_ok,
             "wald_p_adj": np.nan,
-            "sigma_alpha": np.nan,
-            "tau": np.nan,
-            "converged_full": bool(converged_full),
+            "lrt_stat": res["lrt_stat"],
+            "lrt_stat_raw": res["lrt_stat_raw"],
+            "lrt_p": res["lrt_p"],
+            "lrt_ok": lrt_ok,
+            "lrt_p_adj": np.nan,
+            "lrt_clipped": bool(res.get("lrt_clipped", False)),
+            "sigma_alpha": res["sigma_alpha"],
+            "tau": res["tau"],
+            "converged_full": res["converged_full"],
+            "converged_null": res["converged_null"],
             "m_guides_total": float(m_guides_total),
             "m_guides_used": float(m_guides_total),
             "n_samples": float(n_samples),
             "n_obs": float(n_obs),
-            "fit_error": str(full_err or "non-converged fit"),
+            "fit_error": fit_error,
         }
 
-    # Wald contrast test on fixed effects.
-    con = full_res.t_test(np.asarray(l_fixed, dtype=float).reshape(1, -1))
-    theta = float(np.asarray(con.effect).ravel()[0])
-    se_theta = float(np.asarray(con.sd).ravel()[0])
-    wald_z = float(np.asarray(con.tvalue).ravel()[0])
-    wald_p = float(np.asarray(con.pvalue).ravel()[0])
-    wald_ok = bool(np.isfinite(wald_p))
+    if fallback_to_meta and (meta_lookup is not None):
+        meta_row = meta_lookup.get((str(gene_id), str(contrast_name)))
+        if meta_row is not None:
+            theta = float(meta_row["theta"])
+            se_theta = float(meta_row["se_theta"])
+            z = float(meta_row["z"])
+            p = float(meta_row["p"])
+            tau = float(meta_row.get("tau", np.nan))
+            return {
+                "gene_id": str(gene_id),
+                "focal_var": str(contrast_name),
+                "method": "meta_fallback",
+                "model": res.get("model", ""),
+                "optimizer_full": res.get("optimizer_full", ""),
+                "optimizer_null": res.get("optimizer_null", ""),
+                "theta": theta,
+                "se_theta": se_theta,
+                "wald_z": z,
+                "wald_p": p,
+                "wald_ok": bool(np.isfinite(p)),
+                "wald_p_adj": np.nan,
+                "lrt_stat": np.nan,
+                "lrt_stat_raw": np.nan,
+                "lrt_p": np.nan,
+                "lrt_ok": False,
+                "lrt_p_adj": np.nan,
+                "lrt_clipped": False,
+                "sigma_alpha": np.nan,
+                "tau": tau,
+                "converged_full": False,
+                "converged_null": False,
+                "m_guides_total": float(m_guides_total),
+                "m_guides_used": float(meta_row.get("m_guides_used", m_guides_total)),
+                "n_samples": float(n_samples),
+                "n_obs": float(n_obs),
+                "fit_error": str(res.get("fit_error") or "lmm_failed"),
+            }
 
-    sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
     return {
         "gene_id": str(gene_id),
         "focal_var": str(contrast_name),
-        "method": "lmm",
-        "model": model_name,
-        "optimizer_full": optimizer_full,
-        "theta": theta if np.isfinite(theta) else np.nan,
-        "se_theta": se_theta if np.isfinite(se_theta) else np.nan,
-        "wald_z": wald_z if np.isfinite(wald_z) else np.nan,
-        "wald_p": wald_p if np.isfinite(wald_p) else np.nan,
-        "wald_ok": bool(wald_ok),
+        "method": "failed",
+        "model": res.get("model", ""),
+        "optimizer_full": res.get("optimizer_full", ""),
+        "optimizer_null": res.get("optimizer_null", ""),
+        "theta": np.nan,
+        "se_theta": np.nan,
+        "wald_z": np.nan,
+        "wald_p": np.nan,
+        "wald_ok": False,
         "wald_p_adj": np.nan,
-        "sigma_alpha": sigma_alpha,
-        "tau": tau,
-        "converged_full": bool(converged_full),
+        "lrt_stat": np.nan,
+        "lrt_stat_raw": np.nan,
+        "lrt_p": np.nan,
+        "lrt_ok": False,
+        "lrt_p_adj": np.nan,
+        "lrt_clipped": False,
+        "sigma_alpha": np.nan,
+        "tau": np.nan,
+        "converged_full": bool(res.get("converged_full", False)),
+        "converged_null": bool(res.get("converged_null", False)),
         "m_guides_total": float(m_guides_total),
         "m_guides_used": float(m_guides_total),
         "n_samples": float(n_samples),
         "n_obs": float(n_obs),
-        "fit_error": "",
+        "fit_error": str(res.get("fit_error", "")),
     }
 
 
@@ -1200,15 +1362,23 @@ def iter_gene_lmm_contrast_rows(
                 "method": "failed",
                 "model": "",
                 "optimizer_full": "",
+                "optimizer_null": "",
                 "theta": np.nan,
                 "se_theta": np.nan,
                 "wald_z": np.nan,
                 "wald_p": np.nan,
                 "wald_ok": False,
                 "wald_p_adj": np.nan,
+                "lrt_stat": np.nan,
+                "lrt_stat_raw": np.nan,
+                "lrt_p": np.nan,
+                "lrt_ok": False,
+                "lrt_p_adj": np.nan,
+                "lrt_clipped": False,
                 "sigma_alpha": np.nan,
                 "tau": np.nan,
                 "converged_full": False,
+                "converged_null": False,
                 "m_guides_total": np.nan,
                 "m_guides_used": np.nan,
                 "n_samples": np.nan,
