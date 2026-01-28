@@ -6,6 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 
+from .contrasts import contrast_definitions_table
 from . import gene_level as gene_level_mod
 from . import pmd_std_res_guide_counts as guide_mod
 
@@ -34,6 +35,14 @@ def run_posthoc_contrasts(
     gene_methods: list[str] | None,
     gene_out_dir: str | None,
     gene_progress: bool,
+    gene_lmm_scope: str = "meta_or_het_fdr",
+    gene_lmm_q_meta: float = 0.1,
+    gene_lmm_q_het: float = 0.1,
+    gene_lmm_audit_n: int = 50,
+    gene_lmm_audit_seed: int = 123456,
+    gene_lmm_max_genes_per_focal_var: int | None = None,
+    gene_lmm_explicit_genes: list[str] | None = None,
+    gene_lmm_jobs: int = 1,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
     sep = _sep_from_file_type(file_type)
@@ -68,6 +77,10 @@ def run_posthoc_contrasts(
             raise ValueError("Not all variables in pre_regress_vars are in the model matrix!")
         _, first_regressed = guide_mod.run_glm_analysis(std_res, mm[pre_regress_vars])
         response = first_regressed
+        mm_for_contrasts = mm[keep_cols].copy()
+        defs = contrast_definitions_table([str(c) for c in contrasts], list(mm_for_contrasts.columns))
+        defs_path = os.path.join(output_dir, "PMD_std_res_contrast_defs.tsv")
+        defs.to_csv(defs_path, sep="\t", index=False)
         _, resids_df, contrasts_df = guide_mod.run_glm_analysis_with_contrasts(
             response,
             mm[keep_cols],
@@ -77,6 +90,12 @@ def run_posthoc_contrasts(
     else:
         keep_cols = list(mm.columns)
         response = std_res
+        mm_for_contrasts = mm[keep_cols].copy()
+        if "Intercept" not in mm_for_contrasts.columns:
+            mm_for_contrasts.insert(0, "Intercept", 1.0)
+        defs = contrast_definitions_table([str(c) for c in contrasts], list(mm_for_contrasts.columns))
+        defs_path = os.path.join(output_dir, "PMD_std_res_contrast_defs.tsv")
+        defs.to_csv(defs_path, sep="\t", index=False)
         _, resids_df, contrasts_df = guide_mod.run_glm_analysis_with_contrasts(
             response,
             mm[keep_cols],
@@ -96,9 +115,6 @@ def run_posthoc_contrasts(
     if gene_out_dir is None:
         gene_out_dir = os.path.join(output_dir, "gene_level")
 
-    if "lmm" in gene_methods:
-        print("gene-level contrasts: skipping lmm (not implemented yet)", flush=True)
-
     gene_add_intercept = not (len(pre_regress_vars) > 0)
     gene_mm = mm[keep_cols]
     gene_mm_aligned = gene_level_mod._align_model_matrix(gene_mm, list(response.columns))
@@ -115,7 +131,7 @@ def run_posthoc_contrasts(
     gene_qc_contrasts = None
     gene_flagged_contrasts = None
 
-    needs_meta = any(m in gene_methods for m in ["meta", "flagged", "mixture", "tmeta"])
+    needs_meta = any(m in gene_methods for m in ["meta", "lmm", "flagged", "mixture", "tmeta"])
     if needs_meta:
         gene_meta_contrasts = gene_level_mod.compute_gene_meta(
             response,
@@ -130,6 +146,68 @@ def run_posthoc_contrasts(
             os.makedirs(gene_out_dir, exist_ok=True)
             out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta_contrasts.tsv")
             gene_meta_contrasts.to_csv(out_path, sep="\t", index=False)
+
+    if "lmm" in gene_methods:
+        from . import gene_level_lmm as gene_level_lmm_mod
+        from . import gene_level_selection as gene_level_selection_mod
+
+        if gene_meta_contrasts is None:
+            raise RuntimeError("internal error: gene_meta_contrasts is required for contrast lmm")
+
+        sel_cfg = gene_level_selection_mod.GeneLmmSelectionConfig(
+            scope=str(gene_lmm_scope),
+            q_meta=float(gene_lmm_q_meta),
+            q_het=float(gene_lmm_q_het),
+            audit_n=int(gene_lmm_audit_n),
+            audit_seed=int(gene_lmm_audit_seed),
+            max_genes_per_focal_var=gene_lmm_max_genes_per_focal_var,
+            explicit_genes=tuple([] if gene_lmm_explicit_genes is None else [str(g) for g in gene_lmm_explicit_genes]),
+        )
+        sel_cfg.validate()
+
+        feasibility = gene_level_lmm_mod.compute_gene_lmm_contrast_feasibility(
+            response,
+            annotation_table,
+            gene_mm,
+            contrasts=contrast_names,
+            gene_id_col=gene_id_col,
+            add_intercept=gene_add_intercept,
+        )
+        gene_lmm_selection_contrasts = gene_level_selection_mod.compute_gene_lmm_selection(
+            gene_meta_contrasts,
+            feasibility,
+            config=sel_cfg,
+        )
+        os.makedirs(gene_out_dir, exist_ok=True)
+        out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_selection_contrasts.tsv")
+        gene_lmm_selection_contrasts.to_csv(out_path, sep="\t", index=False)
+
+        gene_lmm_contrasts = gene_level_lmm_mod.compute_gene_lmm_contrasts(
+            response,
+            annotation_table,
+            gene_mm,
+            contrasts=contrast_names,
+            gene_id_col=gene_id_col,
+            add_intercept=gene_add_intercept,
+            meta_results=gene_meta_contrasts,
+            selection_table=gene_lmm_selection_contrasts,
+            n_jobs=int(gene_lmm_jobs),
+            progress=bool(gene_progress),
+        )
+        out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_contrasts.tsv")
+        gene_lmm_contrasts.to_csv(out_path, sep="\t", index=False)
+
+        full = gene_lmm_selection_contrasts.copy()
+        meta_cols = ["theta", "se_theta", "p", "p_adj", "Q_p", "Q_p_adj", "m_guides_used"]
+        rename_meta = {c: f"meta_{c}" for c in meta_cols if c in full.columns}
+        full = full.rename(columns=rename_meta)
+        if gene_lmm_contrasts is not None and (not gene_lmm_contrasts.empty):
+            lmm = gene_lmm_contrasts.copy()
+            lmm_cols = [c for c in lmm.columns if c not in {"gene_id", "focal_var"}]
+            lmm = lmm.rename(columns={c: f"lmm_{c}" for c in lmm_cols})
+            full = full.merge(lmm, on=["gene_id", "focal_var"], how="left", validate="one_to_one", sort=False)
+        out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_contrasts_full.tsv")
+        full.to_csv(out_path, sep="\t", index=False)
 
     if "stouffer" in gene_methods:
         from . import gene_level_stouffer as gene_level_stouffer_mod
@@ -237,6 +315,8 @@ def run_posthoc_contrasts(
         parts = []
         if gene_meta_contrasts is not None:
             parts.append(f"meta={gene_meta_contrasts.shape[0]}")
+        if "lmm" in gene_methods:
+            parts.append("lmm=contrast")
         if gene_qc_contrasts is not None:
             parts.append(f"qc={gene_qc_contrasts.shape[0]}")
         if gene_flagged_contrasts is not None:
@@ -278,7 +358,9 @@ def main() -> None:
         dest="contrasts",
         type=str,
         nargs="+",
+        action="extend",
         required=True,
+        default=[],
         help="Linear contrast expression(s), e.g. \"C1_high - C1_low\"",
     )
     parser.add_argument(
@@ -302,6 +384,64 @@ def main() -> None:
         nargs="+",
         default=["meta", "stouffer", "qc", "flagged", "mixture", "tmeta"],
         help="Gene-level contrast methods to run (default: meta stouffer qc flagged mixture tmeta).",
+    )
+    parser.add_argument(
+        "--gene-lmm-scope",
+        dest="gene_lmm_scope",
+        type=str,
+        choices=["all", "meta_fdr", "meta_or_het_fdr", "explicit", "none"],
+        default="meta_or_het_fdr",
+        help="Plan A (LMM) scope selection policy (default: meta_or_het_fdr).",
+    )
+    parser.add_argument(
+        "--gene-lmm-q-meta",
+        dest="gene_lmm_q_meta",
+        type=float,
+        default=0.1,
+        help="Plan A selection: meta FDR threshold q_meta (default: 0.1).",
+    )
+    parser.add_argument(
+        "--gene-lmm-q-het",
+        dest="gene_lmm_q_het",
+        type=float,
+        default=0.1,
+        help="Plan A selection: heterogeneity FDR threshold q_het (default: 0.1).",
+    )
+    parser.add_argument(
+        "--gene-lmm-audit-n",
+        dest="gene_lmm_audit_n",
+        type=int,
+        default=50,
+        help="Plan A selection: deterministic audit sample size per contrast (default: 50).",
+    )
+    parser.add_argument(
+        "--gene-lmm-audit-seed",
+        dest="gene_lmm_audit_seed",
+        type=int,
+        default=123456,
+        help="Plan A selection: audit RNG seed (default: 123456).",
+    )
+    parser.add_argument(
+        "--gene-lmm-max-genes-per-focal-var",
+        dest="gene_lmm_max_genes_per_focal_var",
+        type=int,
+        default=None,
+        help="Optional cap on selected genes per contrast (default: no cap).",
+    )
+    parser.add_argument(
+        "--gene-lmm-explicit-genes",
+        dest="gene_lmm_explicit_genes",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Gene id(s) to fit with Plan A when --gene-lmm-scope=explicit.",
+    )
+    parser.add_argument(
+        "--gene-lmm-jobs",
+        dest="gene_lmm_jobs",
+        type=int,
+        default=1,
+        help="Parallel worker threads for Plan A LMM contrasts (default: 1).",
     )
     parser.add_argument(
         "--gene-out-dir",
@@ -328,6 +468,14 @@ def main() -> None:
         gene_methods=args.gene_methods,
         gene_out_dir=args.gene_out_dir,
         gene_progress=bool(args.gene_progress),
+        gene_lmm_scope=str(args.gene_lmm_scope),
+        gene_lmm_q_meta=float(args.gene_lmm_q_meta),
+        gene_lmm_q_het=float(args.gene_lmm_q_het),
+        gene_lmm_audit_n=int(args.gene_lmm_audit_n),
+        gene_lmm_audit_seed=int(args.gene_lmm_audit_seed),
+        gene_lmm_max_genes_per_focal_var=args.gene_lmm_max_genes_per_focal_var,
+        gene_lmm_explicit_genes=args.gene_lmm_explicit_genes,
+        gene_lmm_jobs=int(args.gene_lmm_jobs),
     )
 
 

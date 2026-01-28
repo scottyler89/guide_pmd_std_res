@@ -49,10 +49,14 @@ def test_contrasts_do_not_change_baseline_golden_bytes(tmp_path, monkeypatch):
     for name in expected_files:
         assert _sha256(out_dir / name) == _sha256(expected_dir / name)
 
+    assert (out_dir / "PMD_std_res_contrast_defs.tsv").is_file()
     assert (out_dir / "PMD_std_res_stats_contrasts.tsv").is_file()
     gene_level_dir = out_dir / "gene_level"
     assert (gene_level_dir / "PMD_std_res_gene_meta_contrasts.tsv").is_file()
     assert (gene_level_dir / "PMD_std_res_gene_stouffer_contrasts.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm_selection_contrasts.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm_contrasts.tsv").is_file()
+    assert (gene_level_dir / "PMD_std_res_gene_lmm_contrasts_full.tsv").is_file()
 
 
 def test_posthoc_contrasts_writes_outputs(tmp_path):
@@ -95,7 +99,55 @@ def test_posthoc_contrasts_writes_outputs(tmp_path):
         gene_progress=False,
     )
 
+    assert (out_dir / "PMD_std_res_contrast_defs.tsv").is_file()
     assert (out_dir / "PMD_std_res_stats_contrasts.tsv").is_file()
     assert (out_dir / "gene_level" / "PMD_std_res_gene_meta_contrasts.tsv").is_file()
     assert (out_dir / "gene_level" / "PMD_std_res_gene_stouffer_contrasts.tsv").is_file()
 
+
+def test_posthoc_contrasts_can_run_lmm(tmp_path):
+    counts_path = tmp_path / "counts.tsv"
+    std_res_path = tmp_path / "PMD_std_res.tsv"
+    mm_path = tmp_path / "mm.tsv"
+    out_dir = tmp_path / "out"
+
+    counts = pd.DataFrame(
+        {"gene": ["A", "A", "B"], "s1": [10, 11, 12], "s2": [13, 14, 15], "s3": [16, 17, 18], "s4": [19, 20, 21]},
+        index=["g1", "g2", "g3"],
+    )
+    counts.to_csv(counts_path, sep="\t")
+
+    std_res = pd.DataFrame(
+        {"s1": [0.0, 0.1, -0.1], "s2": [0.0, 0.2, -0.2], "s3": [0.1, 0.0, 0.3], "s4": [0.2, 0.0, 0.4]},
+        index=["g1", "g2", "g3"],
+    )
+    std_res.to_csv(std_res_path, sep="\t")
+
+    mm = pd.DataFrame(
+        {"treatment": [0.0, 0.0, 1.0, 1.0]},
+        index=["s1", "s2", "s3", "s4"],
+    )
+    mm.to_csv(mm_path, sep="\t")
+
+    run_posthoc_contrasts(
+        counts_file=str(counts_path),
+        std_res_file=str(std_res_path),
+        model_matrix_file=str(mm_path),
+        output_dir=str(out_dir),
+        annotation_cols=2,
+        pre_regress_vars=None,
+        file_type="tsv",
+        contrasts=["treatment"],
+        gene_level=True,
+        gene_id_col=1,
+        gene_methods=["meta", "lmm"],
+        gene_out_dir=None,
+        gene_progress=False,
+        gene_lmm_jobs=1,
+        gene_lmm_scope="all",
+        gene_lmm_audit_n=0,
+    )
+
+    assert (out_dir / "gene_level" / "PMD_std_res_gene_lmm_selection_contrasts.tsv").is_file()
+    assert (out_dir / "gene_level" / "PMD_std_res_gene_lmm_contrasts.tsv").is_file()
+    assert (out_dir / "gene_level" / "PMD_std_res_gene_lmm_contrasts_full.tsv").is_file()

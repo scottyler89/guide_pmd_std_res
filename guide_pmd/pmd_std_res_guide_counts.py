@@ -14,6 +14,7 @@ from scipy.stats import false_discovery_control as fdr
 from percent_max_diff.percent_max_diff import pmd
 
 from .contrasts import build_contrast_matrix
+from .contrasts import contrast_definitions_table
 
 gc.enable()
 
@@ -524,6 +525,10 @@ def pmd_std_res_and_stats(input_file,
             # In this case, we've already modeled and accounted for the intercept, 
             # so we exclude it from the second model in the serial modeling
             if contrasts is not None and len(contrasts) > 0:
+                mm_for_contrasts = mm[keep_cols].copy()
+                defs = contrast_definitions_table([str(c) for c in contrasts], list(mm_for_contrasts.columns))
+                defs_path = os.path.join(output_dir, "PMD_std_res_contrast_defs.tsv")
+                defs.to_csv(defs_path, sep="\t", index=False)
                 stats_df, resids_df, stats_contrasts_df = run_glm_analysis_with_contrasts(
                     first_regressed,
                     mm[keep_cols],
@@ -536,6 +541,12 @@ def pmd_std_res_and_stats(input_file,
         else:
             keep_cols = mm.columns
             if contrasts is not None and len(contrasts) > 0:
+                mm_for_contrasts = mm[keep_cols].copy()
+                if "Intercept" not in mm_for_contrasts.columns:
+                    mm_for_contrasts.insert(0, "Intercept", 1.0)
+                defs = contrast_definitions_table([str(c) for c in contrasts], list(mm_for_contrasts.columns))
+                defs_path = os.path.join(output_dir, "PMD_std_res_contrast_defs.tsv")
+                defs.to_csv(defs_path, sep="\t", index=False)
                 stats_df, resids_df, stats_contrasts_df = run_glm_analysis_with_contrasts(
                     std_res,
                     mm[keep_cols],
@@ -963,9 +974,6 @@ def pmd_std_res_and_stats(input_file,
                 gene_tmeta_contrasts = None
                 gene_tmeta_guides_contrasts = None
 
-                if "lmm" in gene_methods:
-                    print("gene-level contrasts: skipping lmm (not implemented yet)", flush=True)
-
                 if per_guide_ols is None:
                     # Per-guide slopes are always required for contrast aggregation.
                     gene_mm_aligned = gene_level_mod._align_model_matrix(gene_mm, list(gene_response.columns))
@@ -985,7 +993,7 @@ def pmd_std_res_and_stats(input_file,
                 )
                 contrast_names = sorted(per_guide_contrasts["focal_var"].astype(str).unique().tolist())
 
-                needs_contrast_meta = any(m in gene_methods for m in ["meta", "flagged", "mixture", "tmeta"])
+                needs_contrast_meta = any(m in gene_methods for m in ["meta", "lmm", "flagged", "mixture", "tmeta"])
                 if needs_contrast_meta:
                     gene_meta_contrasts = gene_level_mod.compute_gene_meta(
                         gene_response,
@@ -1000,6 +1008,68 @@ def pmd_std_res_and_stats(input_file,
                         os.makedirs(gene_out_dir, exist_ok=True)
                         gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_meta_contrasts.tsv")
                         gene_meta_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                if "lmm" in gene_methods:
+                    from . import gene_level_selection as gene_level_selection_mod
+                    from . import gene_level_lmm as gene_level_lmm_mod
+
+                    if gene_meta_contrasts is None:
+                        raise RuntimeError("internal error: gene_meta_contrasts is required for contrast lmm")  # pragma: no cover
+
+                    sel_cfg = gene_level_selection_mod.GeneLmmSelectionConfig(
+                        scope=str(gene_lmm_scope),
+                        q_meta=float(gene_lmm_q_meta),
+                        q_het=float(gene_lmm_q_het),
+                        audit_n=int(gene_lmm_audit_n),
+                        audit_seed=int(gene_lmm_audit_seed),
+                        max_genes_per_focal_var=gene_lmm_max_genes_per_focal_var,
+                        explicit_genes=tuple([] if gene_lmm_explicit_genes is None else [str(g) for g in gene_lmm_explicit_genes]),
+                    )
+                    sel_cfg.validate()
+
+                    feasibility = gene_level_lmm_mod.compute_gene_lmm_contrast_feasibility(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        contrasts=contrast_names,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                    )
+                    gene_lmm_selection_contrasts = gene_level_selection_mod.compute_gene_lmm_selection(
+                        gene_meta_contrasts,
+                        feasibility,
+                        config=sel_cfg,
+                    )
+                    os.makedirs(gene_out_dir, exist_ok=True)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_selection_contrasts.tsv")
+                    gene_lmm_selection_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                    gene_lmm_contrasts = gene_level_lmm_mod.compute_gene_lmm_contrasts(
+                        gene_response,
+                        annotation_table,
+                        gene_mm,
+                        contrasts=contrast_names,
+                        gene_id_col=gene_id_col,
+                        add_intercept=gene_add_intercept,
+                        meta_results=gene_meta_contrasts,
+                        selection_table=gene_lmm_selection_contrasts,
+                        n_jobs=int(gene_lmm_jobs),
+                        progress=bool(gene_progress),
+                    )
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_contrasts.tsv")
+                    gene_lmm_contrasts.to_csv(gene_out_path, sep="\t", index=False)
+
+                    full = gene_lmm_selection_contrasts.copy()
+                    meta_cols = ["theta", "se_theta", "p", "p_adj", "Q_p", "Q_p_adj", "m_guides_used"]
+                    rename_meta = {c: f"meta_{c}" for c in meta_cols if c in full.columns}
+                    full = full.rename(columns=rename_meta)
+                    if gene_lmm_contrasts is not None and (not gene_lmm_contrasts.empty):
+                        lmm = gene_lmm_contrasts.copy()
+                        lmm_cols = [c for c in lmm.columns if c not in {"gene_id", "focal_var"}]
+                        lmm = lmm.rename(columns={c: f"lmm_{c}" for c in lmm_cols})
+                        full = full.merge(lmm, on=["gene_id", "focal_var"], how="left", validate="one_to_one", sort=False)
+                    gene_out_path = os.path.join(gene_out_dir, "PMD_std_res_gene_lmm_contrasts_full.tsv")
+                    full.to_csv(gene_out_path, sep="\t", index=False)
 
                 if "stouffer" in gene_methods:
                     from . import gene_level_stouffer as gene_level_stouffer_mod
@@ -1222,7 +1292,8 @@ def main():
         dest="contrasts",
         type=str,
         nargs="+",
-        default=None,
+        action="extend",
+        default=[],
         help="Linear contrast expression(s), e.g. \"C1_high - C1_low\" (additive output: PMD_std_res_stats_contrasts.tsv).",
     )
     parser.add_argument(

@@ -15,6 +15,7 @@ from scipy.stats import chi2
 from scipy.stats import norm
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
+from .contrasts import build_contrast_matrix
 from .gene_level import _align_model_matrix
 from .gene_level import _get_gene_ids
 from .gene_level import _nan_fdr
@@ -49,6 +50,28 @@ GENE_LMM_COLUMNS = [
     "fit_error",
 ]
 
+GENE_LMM_CONTRAST_COLUMNS = [
+    "gene_id",
+    "focal_var",
+    "method",
+    "model",
+    "optimizer_full",
+    "theta",
+    "se_theta",
+    "wald_z",
+    "wald_p",
+    "wald_ok",
+    "wald_p_adj",
+    "sigma_alpha",
+    "tau",
+    "converged_full",
+    "m_guides_total",
+    "m_guides_used",
+    "n_samples",
+    "n_obs",
+    "fit_error",
+]
+
 
 def finalize_gene_lmm_table(out: pd.DataFrame) -> pd.DataFrame:
     """
@@ -69,6 +92,21 @@ def finalize_gene_lmm_table(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def finalize_gene_lmm_contrast_table(out: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure a canonical Plan A (LMM) contrast table schema + stable sorting + per-contrast FDR.
+    """
+    missing = [c for c in GENE_LMM_CONTRAST_COLUMNS if c not in out.columns]
+    if missing:
+        out = out.copy()
+        for col in missing:
+            out[col] = np.nan
+    out = out[GENE_LMM_CONTRAST_COLUMNS].sort_values(["focal_var", "gene_id"], kind="mergesort").reset_index(drop=True)
+    if not out.empty:
+        out["wald_p_adj"] = out.groupby("focal_var", sort=False)["wald_p"].transform(_nan_fdr)
+    return out
+
+
 def _prepare_model_matrix(model_matrix: pd.DataFrame, *, add_intercept: bool) -> pd.DataFrame:
     mm = model_matrix.copy()
     if add_intercept and "Intercept" not in mm.columns:
@@ -86,6 +124,121 @@ def _wide_to_long(response_matrix: pd.DataFrame) -> pd.DataFrame:
     wide.index.name = "guide_id"
     long_df = wide.reset_index().melt(id_vars=["guide_id"], var_name="sample_id", value_name="y")
     return long_df
+
+
+def _is_contrast_estimable(mm: pd.DataFrame, l: np.ndarray) -> bool:
+    """
+    Check estimability of a linear contrast l^T beta under a potentially rank-deficient design matrix.
+
+    For X = mm (n x p), the contrast l (p,) is estimable iff it is orthogonal to the null space of X:
+      for all v s.t. X v = 0, we have l^T v = 0.
+    """
+    X = mm.to_numpy(dtype=float)
+    l = np.asarray(l, dtype=float).reshape(-1)
+    if X.ndim != 2:
+        raise ValueError("mm must be 2D")  # pragma: no cover
+    if l.shape[0] != X.shape[1]:
+        raise ValueError("contrast length must match number of model_matrix columns")
+
+    # SVD-based null space basis.
+    u, s, vt = np.linalg.svd(X, full_matrices=True)
+    if s.size == 0:
+        return False
+    tol = float(max(X.shape) * np.finfo(float).eps * float(np.max(s)))
+    rank = int(np.sum(s > tol))
+    if rank >= X.shape[1]:
+        return True
+    null_basis = vt[rank:, :].T  # (p x (p-rank))
+    proj = null_basis.T @ l
+    return bool(np.all(np.abs(proj) <= 1e-8))
+
+
+def compute_gene_lmm_contrast_feasibility(
+    response_matrix: pd.DataFrame,
+    annotation_table: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    contrasts: Sequence[str],
+    gene_id_col: int = 1,
+    add_intercept: bool = True,
+) -> pd.DataFrame:
+    """
+    Compute per-(gene, contrast) feasibility gates for mixed-model fitting.
+
+    This mirrors `compute_gene_lmm_feasibility`, but uses an estimability check for
+    a linear contrast (rather than requiring the contrast to be a model-matrix column).
+    """
+    contrasts = [str(c) for c in contrasts]
+    if not contrasts:
+        raise ValueError("contrasts must not be empty")
+
+    response = response_matrix.copy()
+    response.index = response.index.astype(str)
+    if response.index.has_duplicates:
+        raise ValueError("response_matrix index must not contain duplicates (guide_id)")
+
+    gene_ids = _get_gene_ids(annotation_table, gene_id_col).copy()
+    gene_ids.index = gene_ids.index.astype(str)
+    if gene_ids.index.has_duplicates:
+        raise ValueError("annotation_table index must not contain duplicates (guide_id)")
+
+    mm = _align_model_matrix(model_matrix, list(response.columns))
+    mm = _prepare_model_matrix(mm, add_intercept=add_intercept)
+
+    contrast_L = build_contrast_matrix(list(contrasts), list(mm.columns))
+    contrast_estimable = {
+        str(name): _is_contrast_estimable(mm, contrast_L.loc[str(name)].to_numpy(dtype=float))
+        for name in contrast_L.index.astype(str).tolist()
+    }
+
+    genes = sorted(gene_ids.unique().astype(str).tolist())
+    guides_in_response = set(response.index.tolist())
+    gene_ids_present = gene_ids[gene_ids.index.isin(guides_in_response)]
+    guide_counts = gene_ids_present.value_counts().astype(int).to_dict()
+    gene_m_guides = {g: int(guide_counts.get(g, 0)) for g in genes}
+
+    gene_deg = {}
+    for gene_id in genes:
+        m = gene_m_guides[gene_id]
+        if m == 0:
+            gene_deg[gene_id] = True
+            continue
+        guides = gene_ids_present.index[gene_ids_present == gene_id].tolist()
+        sub = response.loc[guides, :]
+        var = float(np.var(sub.to_numpy(dtype=float)))
+        gene_deg[gene_id] = bool(var == 0.0)
+
+    rows: list[dict[str, object]] = []
+    for contrast_name in contrast_L.index.astype(str).tolist():
+        estimable = bool(contrast_estimable[str(contrast_name)])
+        for gene_id in genes:
+            m_guides = int(gene_m_guides[gene_id])
+            skip_reason = ""
+            feasible = True
+            if not estimable:
+                feasible = False
+                skip_reason = "contrast_not_estimable"
+            elif m_guides < 2:
+                feasible = False
+                skip_reason = "insufficient_guides"
+            elif gene_deg[gene_id]:
+                feasible = False
+                skip_reason = "degenerate_response"
+            rows.append(
+                {
+                    "gene_id": str(gene_id),
+                    "focal_var": str(contrast_name),
+                    "m_guides_total": float(m_guides),
+                    "feasible": bool(feasible),
+                    "skip_reason": str(skip_reason),
+                }
+            )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["focal_var", "gene_id"], kind="mergesort")
+        .reset_index(drop=True)
+    )
 
 
 def _fit_mixedlm(
@@ -739,3 +892,402 @@ def compute_gene_lmm(
         )
     )
     return finalize_gene_lmm_table(pd.DataFrame(out_rows, columns=GENE_LMM_COLUMNS))
+
+
+def _fit_gene_lmm_contrast_task(
+    *,
+    response_matrix: pd.DataFrame,
+    gene_to_guides: dict[str, list[str]],
+    mm: pd.DataFrame,
+    mm_reset: pd.DataFrame,
+    gene_id: str,
+    contrast_name: str,
+    l_fixed: np.ndarray,
+    l_random: np.ndarray,
+    allow_random_slope: bool,
+    min_guides_random_slope: int,
+    max_iter: int,
+    fallback_to_meta: bool,
+    meta_lookup: dict[tuple[str, str], dict[str, float]] | None,
+) -> dict[str, object]:
+    fixed_cols_full = list(mm.columns)
+
+    guides = gene_to_guides.get(str(gene_id), [])
+    sub = response_matrix.loc[guides, :] if guides else response_matrix.iloc[0:0, :]
+    m_guides_total = int(sub.shape[0])
+    n_samples = int(sub.shape[1])
+    n_obs = int(m_guides_total * n_samples)
+
+    if m_guides_total == 0:
+        return {
+            "gene_id": str(gene_id),
+            "focal_var": str(contrast_name),
+            "method": "failed",
+            "model": "",
+            "optimizer_full": "",
+            "theta": np.nan,
+            "se_theta": np.nan,
+            "wald_z": np.nan,
+            "wald_p": np.nan,
+            "wald_ok": False,
+            "wald_p_adj": np.nan,
+            "sigma_alpha": np.nan,
+            "tau": np.nan,
+            "converged_full": False,
+            "m_guides_total": 0.0,
+            "m_guides_used": 0.0,
+            "n_samples": float(n_samples),
+            "n_obs": float(n_obs),
+            "fit_error": "no guides for gene in response_matrix",
+        }
+
+    long_df = _wide_to_long(sub)
+    long_df = long_df.merge(mm_reset, on="sample_id", how="left", validate="many_to_one")
+    if long_df[fixed_cols_full].isna().any().any():
+        raise ValueError(f"model_matrix missing sample ids after join for gene {gene_id}")
+
+    endog = long_df["y"].astype(float)
+    groups = long_df["guide_id"].astype(str)
+    exog = long_df[fixed_cols_full].astype(float)
+
+    # Contrast direction (for random slope): drop any intercept weight to avoid
+    # collinearity with the random intercept.
+    contrast_re = exog.to_numpy(dtype=float) @ np.asarray(l_random, dtype=float).reshape(-1)
+    contrast_re = contrast_re.astype(float)
+
+    use_random_slope = (
+        bool(allow_random_slope)
+        and (m_guides_total >= int(min_guides_random_slope))
+        and bool(np.nanstd(contrast_re) > 0.0)
+    )
+    if use_random_slope:
+        exog_re = pd.DataFrame(
+            {
+                "Intercept_re": np.ones(long_df.shape[0], dtype=float),
+                "contrast_re": contrast_re,
+            },
+            index=long_df.index,
+        )
+        model_name = "ri+rs"
+    else:
+        exog_re = pd.DataFrame({"Intercept_re": np.ones(long_df.shape[0], dtype=float)}, index=long_df.index)
+        model_name = "ri"
+
+    full_res, full_err = _fit_mixedlm(
+        endog,
+        exog,
+        groups=groups,
+        exog_re=exog_re,
+        max_iter=max_iter,
+    )
+    converged_full = bool(getattr(full_res, "converged", False)) if full_res is not None else False
+    optimizer_full = getattr(full_res, "_guide_pmd_optimizer", "") if full_res is not None else ""
+
+    if (full_res is None) or (not converged_full):
+        if fallback_to_meta and (meta_lookup is not None):
+            meta_row = meta_lookup.get((str(gene_id), str(contrast_name)))
+            if meta_row is not None:
+                theta = float(meta_row["theta"])
+                se_theta = float(meta_row["se_theta"])
+                z = float(meta_row["z"])
+                p = float(meta_row["p"])
+                tau = float(meta_row.get("tau", np.nan))
+                return {
+                    "gene_id": str(gene_id),
+                    "focal_var": str(contrast_name),
+                    "method": "meta_fallback",
+                    "model": "",
+                    "optimizer_full": "",
+                    "theta": theta,
+                    "se_theta": se_theta,
+                    "wald_z": z,
+                    "wald_p": p,
+                    "wald_ok": bool(np.isfinite(p)),
+                    "wald_p_adj": np.nan,
+                    "sigma_alpha": np.nan,
+                    "tau": tau,
+                    "converged_full": False,
+                    "m_guides_total": float(m_guides_total),
+                    "m_guides_used": float(meta_row.get("m_guides_used", m_guides_total)),
+                    "n_samples": float(n_samples),
+                    "n_obs": float(n_obs),
+                    "fit_error": str(full_err or "non-converged fit"),
+                }
+
+        return {
+            "gene_id": str(gene_id),
+            "focal_var": str(contrast_name),
+            "method": "failed",
+            "model": model_name,
+            "optimizer_full": optimizer_full,
+            "theta": np.nan,
+            "se_theta": np.nan,
+            "wald_z": np.nan,
+            "wald_p": np.nan,
+            "wald_ok": False,
+            "wald_p_adj": np.nan,
+            "sigma_alpha": np.nan,
+            "tau": np.nan,
+            "converged_full": bool(converged_full),
+            "m_guides_total": float(m_guides_total),
+            "m_guides_used": float(m_guides_total),
+            "n_samples": float(n_samples),
+            "n_obs": float(n_obs),
+            "fit_error": str(full_err or "non-converged fit"),
+        }
+
+    # Wald contrast test on fixed effects.
+    con = full_res.t_test(np.asarray(l_fixed, dtype=float).reshape(1, -1))
+    theta = float(np.asarray(con.effect).ravel()[0])
+    se_theta = float(np.asarray(con.sd).ravel()[0])
+    wald_z = float(np.asarray(con.tvalue).ravel()[0])
+    wald_p = float(np.asarray(con.pvalue).ravel()[0])
+    wald_ok = bool(np.isfinite(wald_p))
+
+    sigma_alpha, tau = _extract_re_sds(full_res, random_slope=use_random_slope)
+    return {
+        "gene_id": str(gene_id),
+        "focal_var": str(contrast_name),
+        "method": "lmm",
+        "model": model_name,
+        "optimizer_full": optimizer_full,
+        "theta": theta if np.isfinite(theta) else np.nan,
+        "se_theta": se_theta if np.isfinite(se_theta) else np.nan,
+        "wald_z": wald_z if np.isfinite(wald_z) else np.nan,
+        "wald_p": wald_p if np.isfinite(wald_p) else np.nan,
+        "wald_ok": bool(wald_ok),
+        "wald_p_adj": np.nan,
+        "sigma_alpha": sigma_alpha,
+        "tau": tau,
+        "converged_full": bool(converged_full),
+        "m_guides_total": float(m_guides_total),
+        "m_guides_used": float(m_guides_total),
+        "n_samples": float(n_samples),
+        "n_obs": float(n_obs),
+        "fit_error": "",
+    }
+
+
+def iter_gene_lmm_contrast_rows(
+    response_matrix: pd.DataFrame,
+    annotation_table: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    contrasts: Sequence[str],
+    gene_id_col: int = 1,
+    add_intercept: bool = True,
+    allow_random_slope: bool = True,
+    min_guides_random_slope: int = 3,
+    max_iter: int = 200,
+    fallback_to_meta: bool = True,
+    meta_results: pd.DataFrame | None = None,
+    selection_table: pd.DataFrame | None = None,
+    n_jobs: int = 1,
+    progress: bool = False,
+    progress_every: int = 500,
+    progress_min_seconds: float = 10.0,
+) -> Iterable[dict[str, object]]:
+    contrasts = [str(c) for c in contrasts]
+    if not contrasts:
+        raise ValueError("contrasts must not be empty")
+
+    gene_ids = _get_gene_ids(annotation_table, gene_id_col)
+    if response_matrix.index.has_duplicates:
+        raise ValueError("response_matrix index must not contain duplicates (guide_id)")
+    if gene_ids.index.has_duplicates:
+        raise ValueError("annotation_table index must not contain duplicates (guide_id)")
+
+    mm = _align_model_matrix(model_matrix, list(response_matrix.columns))
+    mm = _prepare_model_matrix(mm, add_intercept=add_intercept)
+    mm_reset = mm.reset_index().rename(columns={mm.index.name or "index": "sample_id"})
+
+    contrast_L = build_contrast_matrix(list(contrasts), list(mm.columns))
+    l_fixed_map = {str(k): contrast_L.loc[str(k)].to_numpy(dtype=float) for k in contrast_L.index.astype(str).tolist()}
+    l_random_map = {}
+    for name, l in l_fixed_map.items():
+        l2 = np.asarray(l, dtype=float).copy()
+        if "Intercept" in mm.columns:
+            try:
+                idx = list(mm.columns).index("Intercept")
+            except ValueError:  # pragma: no cover
+                idx = -1
+            if idx >= 0:
+                l2[idx] = 0.0
+        l_random_map[name] = l2
+
+    meta_lookup: dict[tuple[str, str], dict[str, float]] | None = None
+    if fallback_to_meta and meta_results is not None and (not meta_results.empty):
+        required = {"gene_id", "focal_var", "theta", "se_theta", "z", "p"}
+        missing = required.difference(set(meta_results.columns))
+        if missing:
+            raise ValueError(f"meta_results missing required column(s): {sorted(missing)}")
+        meta_lookup = {}
+        for row in meta_results.itertuples(index=False):
+            key = (str(getattr(row, "gene_id")), str(getattr(row, "focal_var")))
+            meta_lookup[key] = {
+                "theta": float(getattr(row, "theta")),
+                "se_theta": float(getattr(row, "se_theta")),
+                "z": float(getattr(row, "z")),
+                "p": float(getattr(row, "p")),
+                "tau": float(getattr(row, "tau")) if hasattr(row, "tau") else np.nan,
+                "m_guides_used": float(getattr(row, "m_guides_used")) if hasattr(row, "m_guides_used") else np.nan,
+            }
+
+    gene_to_guides: dict[str, list[str]] = {}
+    guide_set = set(response_matrix.index.astype(str).tolist())
+    for guide_id, gene_id in gene_ids.items():
+        gid = str(guide_id)
+        if gid not in guide_set:
+            continue
+        gene = str(gene_id)
+        gene_to_guides.setdefault(gene, []).append(gid)
+
+    tasks: list[tuple[str, str]] = []
+    if selection_table is not None:
+        required = {"gene_id", "focal_var", "selected"}
+        missing = required.difference(set(selection_table.columns))
+        if missing:
+            raise ValueError(f"selection_table missing required column(s): {sorted(missing)}")
+        sel = selection_table.copy()
+        sel["gene_id"] = sel["gene_id"].astype(str)
+        sel["focal_var"] = sel["focal_var"].astype(str)
+        sel = sel[sel["selected"].astype(bool)]
+        for focal_var, sub in sel.groupby("focal_var", sort=True):
+            for gene_id in sorted(sub["gene_id"].unique().tolist()):
+                tasks.append((str(focal_var), str(gene_id)))
+    else:
+        all_gene_ids = sorted(gene_ids.unique().astype(str).tolist())
+        for focal_var in sorted([str(c) for c in contrast_L.index.astype(str).tolist()]):
+            for gene_id in all_gene_ids:
+                tasks.append((str(focal_var), str(gene_id)))
+
+    n_jobs = int(n_jobs)
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be >= 1")
+    progress_every = int(progress_every)
+    if progress_every < 1:
+        progress_every = 1
+    progress_min_seconds = float(progress_min_seconds)
+
+    n_total = int(len(tasks))
+    if n_total == 0:
+        return
+
+    t0 = time.monotonic()
+    last_print = t0
+
+    def _safe_fit_one(focal_var: str, gene_id: str) -> dict[str, object]:
+        try:
+            return _fit_gene_lmm_contrast_task(
+                response_matrix=response_matrix,
+                gene_to_guides=gene_to_guides,
+                mm=mm,
+                mm_reset=mm_reset,
+                gene_id=str(gene_id),
+                contrast_name=str(focal_var),
+                l_fixed=l_fixed_map[str(focal_var)],
+                l_random=l_random_map[str(focal_var)],
+                allow_random_slope=bool(allow_random_slope),
+                min_guides_random_slope=int(min_guides_random_slope),
+                max_iter=int(max_iter),
+                fallback_to_meta=bool(fallback_to_meta),
+                meta_lookup=meta_lookup,
+            )
+        except Exception as exc:
+            return {
+                "gene_id": str(gene_id),
+                "focal_var": str(focal_var),
+                "method": "failed",
+                "model": "",
+                "optimizer_full": "",
+                "theta": np.nan,
+                "se_theta": np.nan,
+                "wald_z": np.nan,
+                "wald_p": np.nan,
+                "wald_ok": False,
+                "wald_p_adj": np.nan,
+                "sigma_alpha": np.nan,
+                "tau": np.nan,
+                "converged_full": False,
+                "m_guides_total": np.nan,
+                "m_guides_used": np.nan,
+                "n_samples": np.nan,
+                "n_obs": np.nan,
+                "fit_error": str(exc),
+            }
+
+    max_inflight = max(4 * int(n_jobs), 256)
+    inflight = min(max_inflight, n_total)
+    task_iter = iter(tasks)
+
+    with ThreadPoolExecutor(max_workers=int(n_jobs)) as executor:
+        futures = set()
+        for _ in range(inflight):
+            focal_var, gene_id = next(task_iter)
+            futures.add(executor.submit(_safe_fit_one, focal_var, gene_id))
+
+        completed = 0
+        while futures:
+            done, futures = wait(futures, return_when=FIRST_COMPLETED)
+            for fut in done:
+                completed += 1
+                yield fut.result()
+                try:
+                    focal_var, gene_id = next(task_iter)
+                except StopIteration:
+                    pass
+                else:
+                    futures.add(executor.submit(_safe_fit_one, focal_var, gene_id))
+
+                if progress and (completed % progress_every == 0 or completed == n_total):
+                    now = time.monotonic()
+                    if (now - last_print) >= progress_min_seconds or completed == n_total:
+                        last_print = now
+                        rate = completed / max(1e-9, (now - t0))
+                        eta_s = (n_total - completed) / max(1e-9, rate)
+                        print(
+                            f"gene-level lmm contrasts: {completed}/{n_total} ({rate:.2f} task/s, eta~{eta_s/60.0:.1f} min)",
+                            flush=True,
+                        )
+
+
+def compute_gene_lmm_contrasts(
+    response_matrix: pd.DataFrame,
+    annotation_table: pd.DataFrame,
+    model_matrix: pd.DataFrame,
+    *,
+    contrasts: Sequence[str],
+    gene_id_col: int = 1,
+    add_intercept: bool = True,
+    allow_random_slope: bool = True,
+    min_guides_random_slope: int = 3,
+    max_iter: int = 200,
+    fallback_to_meta: bool = True,
+    meta_results: pd.DataFrame | None = None,
+    selection_table: pd.DataFrame | None = None,
+    n_jobs: int = 1,
+    progress: bool = False,
+    progress_every: int = 500,
+    progress_min_seconds: float = 10.0,
+) -> pd.DataFrame:
+    out_rows = list(
+        iter_gene_lmm_contrast_rows(
+            response_matrix,
+            annotation_table,
+            model_matrix,
+            contrasts=contrasts,
+            gene_id_col=gene_id_col,
+            add_intercept=add_intercept,
+            allow_random_slope=allow_random_slope,
+            min_guides_random_slope=min_guides_random_slope,
+            max_iter=max_iter,
+            fallback_to_meta=fallback_to_meta,
+            meta_results=meta_results,
+            selection_table=selection_table,
+            n_jobs=n_jobs,
+            progress=progress,
+            progress_every=progress_every,
+            progress_min_seconds=progress_min_seconds,
+        )
+    )
+    return finalize_gene_lmm_contrast_table(pd.DataFrame(out_rows, columns=GENE_LMM_CONTRAST_COLUMNS))

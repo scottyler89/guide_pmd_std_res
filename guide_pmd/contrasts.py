@@ -202,3 +202,39 @@ def build_contrast_matrix(contrasts: list[str], design_cols: list[str]) -> pd.Da
     out = pd.DataFrame(rows, index=names, columns=design_cols, dtype=float)
     out.index.name = "contrast"
     return out
+
+
+def contrast_definitions_table(contrasts: list[str], design_cols: list[str]) -> pd.DataFrame:
+    """
+    Return a long-form table describing each contrast and its term weights.
+
+    Columns:
+      - contrast: contrast name (post NAME=expr parsing; defaults to expression)
+      - expression: the raw expression (without NAME= prefix)
+      - term: a model-matrix term name (column)
+      - weight: numeric weight for that term
+    """
+    design_cols = [str(c) for c in design_cols]
+    col_order = {c: i for i, c in enumerate(design_cols)}
+
+    parsed = [parse_contrast_spec(c) for c in contrasts]
+    _ = build_contrast_matrix([str(c) for c in contrasts], design_cols)  # validates terms + duplicate names
+
+    rows: list[dict[str, object]] = []
+    for p in parsed:
+        for term, weight in p.weights.items():
+            rows.append(
+                {
+                    "contrast": str(p.name),
+                    "expression": str(p.expression),
+                    "term": str(term),
+                    "weight": float(weight),
+                    "_term_order": int(col_order.get(str(term), 1_000_000)),
+                }
+            )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(columns=["contrast", "expression", "term", "weight"])
+    out = out.sort_values(["contrast", "_term_order", "term"], kind="mergesort").drop(columns=["_term_order"]).reset_index(drop=True)
+    return out

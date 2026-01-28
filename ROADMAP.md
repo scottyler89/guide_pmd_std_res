@@ -262,8 +262,9 @@ Phase C — Gene-level contrasts (method-appropriate)
   - [x] `PMD_std_res_gene_flagged_contrasts.tsv`
   - [x] `PMD_std_res_gene_mixture_contrasts.tsv`, `PMD_std_res_gene_mixture_guides_contrasts.tsv`
   - [x] `PMD_std_res_gene_tmeta_contrasts.tsv`, `PMD_std_res_gene_tmeta_guides_contrasts.tsv`
-- [ ] (Stretch) Plan A LMM contrasts: Wald test for `L * beta = 0` using mixed-model fixed-effect covariance:
-  - [ ] `PMD_std_res_gene_lmm_contrasts.tsv` (define random-effects structure policy explicitly; no silent heuristics).
+ - [x] (Stretch) Plan A LMM contrasts: Wald test for `L * beta = 0` using mixed-model fixed-effect covariance:
+  - [x] `PMD_std_res_gene_lmm_contrasts.tsv`
+  - [x] `PMD_std_res_gene_lmm_selection_contrasts.tsv`, `PMD_std_res_gene_lmm_contrasts_full.tsv`
 
 Phase D — CLI + post-run entrypoint
 - [x] CLI: add `--contrast "expr" ...` to `guide-pmd-std-res` (additive outputs; no baseline changes).
